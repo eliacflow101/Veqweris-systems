@@ -1,0 +1,116 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function sameInstitution(institutionId) {
+      return signedIn() && userDoc(request.auth.uid).data.institutionId == institutionId;
+    }
+
+    function hasRole(role) {
+      return signedIn() && userDoc(request.auth.uid).data.role == role;
+    }
+
+    function ownerOrAdmin() {
+      return hasRole("Owner") || hasRole("Admin");
+    }
+
+    function managerOfDepartment(departmentId) {
+      return hasRole("Manager")
+        && userDoc(request.auth.uid).data.departmentId == departmentId;
+    }
+
+    match /institutions/{institutionId} {
+      allow create: if signedIn()
+        && request.resource.data.institutionId == institutionId
+        && request.resource.data.status == "active"
+        && request.resource.data.planTier == "trial"
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.institutionId == institutionId
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "Owner";
+      allow read: if sameInstitution(institutionId);
+      allow update: if sameInstitution(institutionId) && ownerOrAdmin();
+      allow delete: if false;
+    }
+
+    match /users/{uid} {
+      allow create: if signedIn()
+        && uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.role == "Owner"
+        && getAfter(/databases/$(database)/documents/institutions/$(request.resource.data.institutionId)).data.institutionId == request.resource.data.institutionId;
+      allow read: if signedIn() && (uid == request.auth.uid || sameInstitution(resource.data.institutionId));
+      allow update: if signedIn() && (
+        (uid == request.auth.uid
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.institutionId == resource.data.institutionId
+          && request.resource.data.role == resource.data.role)
+        || (ownerOrAdmin() && sameInstitution(resource.data.institutionId)
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.institutionId == resource.data.institutionId)
+      );
+      allow delete: if false;
+    }
+
+    match /departments/{departmentId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create: if ownerOrAdmin()
+        && request.resource.data.departmentId == departmentId
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && request.resource.data.status == "active";
+      allow update: if sameInstitution(resource.data.institutionId)
+        && request.resource.data.departmentId == resource.data.departmentId
+        && request.resource.data.institutionId == resource.data.institutionId
+        && (
+          ownerOrAdmin()
+          || (
+            managerOfDepartment(departmentId)
+            && resource.data.headUserId == request.auth.uid
+            && request.resource.data.headUserId == request.auth.uid
+          )
+        );
+      allow delete: if ownerOrAdmin()
+        && sameInstitution(resource.data.institutionId);
+    }
+
+    match /tasks/{taskId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create: if signedIn()
+        && request.resource.data.taskId == taskId
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && request.resource.data.status in ["todo", "in_progress", "review", "done"]
+        && request.resource.data.priority in ["low", "medium", "high"]
+        && (
+          ownerOrAdmin()
+          || (
+            hasRole("Manager")
+            && request.resource.data.departmentId == userDoc(request.auth.uid).data.departmentId
+          )
+        );
+      allow update: if sameInstitution(resource.data.institutionId)
+        && request.resource.data.taskId == resource.data.taskId
+        && request.resource.data.institutionId == resource.data.institutionId
+        && (
+          ownerOrAdmin()
+          || (
+            hasRole("Manager")
+            && resource.data.departmentId == userDoc(request.auth.uid).data.departmentId
+          )
+          || (
+            hasRole("Employee")
+            && resource.data.assignedTo == request.auth.uid
+            && request.resource.data.assignedTo == resource.data.assignedTo
+            && request.resource.data.departmentId == resource.data.departmentId
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status"])
+          )
+        );
+      allow delete: if ownerOrAdmin()
+        && sameInstitution(resource.data.institutionId);
+    }
+  }
+}

@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --color-canvas: 239 243 248;
+  --color-surface: 250 251 253;
+  --color-surface-raised: 244 247 250;
+  --color-line: 211 220 231;
+  --color-ink: 20 31 47;
+  --color-muted: 90 105 124;
+  --color-accent: 55 103 157;
+  --color-accent-soft: 231 238 246;
+  --color-success: 43 125 88;
+  --color-warning: 169 113 28;
+  --color-danger: 177 67 67;
+  --shadow-panel: 0 1px 2px rgb(11 26 44 / 0.05), 0 5px 16px rgb(11 26 44 / 0.035);
+  --shadow-float: 0 18px 44px rgb(11 26 44 / 0.14);
+  --radius-sm: 0.3rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.7rem;
+  --space-page: 1.5rem;
+  --space-section: 1.25rem;
+  --space-control: 0.75rem;
+  --font-size-label: 0.6875rem;
+  --font-size-metric: 1.75rem;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-canvas: 8 15 27;
+  --color-surface: 14 24 40;
+  --color-surface-raised: 19 32 51;
+  --color-line: 37 54 76;
+  --color-ink: 226 233 242;
+  --color-muted: 143 159 180;
+  --color-accent: 103 145 190;
+  --color-accent-soft: 27 48 74;
+  --color-success: 88 169 124;
+  --color-warning: 205 153 67;
+  --color-danger: 211 103 103;
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.28), 0 7px 20px rgb(0 0 0 / 0.12);
+  --shadow-float: 0 18px 44px rgb(0 0 0 / 0.34);
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body { margin: 0; background: rgb(var(--color-canvas)); color: rgb(var(--color-ink)); font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif; font-size: 0.875rem; letter-spacing: 0.002em; }
+button, input { font: inherit; }
+::selection { background: rgb(var(--color-accent) / 0.28); }
+
+input, select, textarea { border-color: rgb(var(--color-line)); }
+select { color-scheme: inherit; }
+.tabular-nums { font-variant-numeric: tabular-nums; letter-spacing: -0.015em; }
+.data-row { border-bottom: 1px solid rgb(var(--color-line) / 0.62); transition: background-color 140ms ease; }
+.data-row:hover { background: rgb(var(--color-surface-raised) / 0.72); }
+
+@keyframes status-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgb(var(--color-success) / 0.22); } 50% { box-shadow: 0 0 0 5px rgb(var(--color-success) / 0); } }
+.status-pulse { animation: status-pulse 2.4s ease-out infinite; }
