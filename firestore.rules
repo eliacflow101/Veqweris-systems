@@ -78,6 +78,217 @@ service cloud.firestore {
         && sameInstitution(resource.data.institutionId);
     }
 
+    function schoolStaff() {
+      return ownerOrAdmin() || hasRole("Manager");
+    }
+
+    function hasSchoolPermission(permission) {
+      return signedIn()
+        && userDoc(request.auth.uid).data.schoolPermissions != null
+        && permission in userDoc(request.auth.uid).data.schoolPermissions;
+    }
+
+    match /schoolProfiles/{profileId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if ownerOrAdmin()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /academicYears/{academicYearId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if ownerOrAdmin()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /academicLevels/{levelId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if ownerOrAdmin() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /schoolClasses/{classId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if ownerOrAdmin();
+    }
+
+    match /schoolStreams/{streamId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if ownerOrAdmin();
+    }
+
+    match /schoolSubjects/{subjectId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if ownerOrAdmin();
+    }
+
+    match /curricula/{curriculumId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if ownerOrAdmin();
+    }
+
+    match /students/{studentId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /academicEnrollments/{enrollmentId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /guardians/{guardianId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /studentGuardianLinks/{linkId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /libraryLoans/{loanId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasSchoolPermission("school.library.read"));
+      allow create, update: if schoolStaff()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasSchoolPermission("school.library.manage"));
+      allow delete: if false;
+    }
+
+    match /transportRoutes/{routeId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasSchoolPermission("school.transport.read"));
+      allow create, update: if schoolStaff()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasSchoolPermission("school.transport.manage"));
+      allow delete: if false;
+    }
+
+    match /hostelRooms/{roomId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasSchoolPermission("school.hostel.read"));
+      allow create, update: if schoolStaff()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasSchoolPermission("school.hostel.manage"));
+      allow delete: if false;
+    }
+
+    match /schoolHealthRecords/{recordId} {
+      allow read, update: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasSchoolPermission("school.health.sensitive"));
+      allow create: if request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasSchoolPermission("school.health.sensitive"));
+      allow delete: if false;
+    }
+
+    match /welfareIncidents/{incidentId} {
+      allow read, update: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasSchoolPermission("school.welfare.sensitive"));
+      allow create: if request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasSchoolPermission("school.welfare.sensitive"));
+      allow delete: if false;
+    }
+
+    match /safeguardingCases/{caseId} {
+      allow read, update: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasSchoolPermission("school.safeguarding.sensitive"));
+      allow create: if request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasSchoolPermission("school.safeguarding.sensitive"));
+      allow delete: if false;
+    }
+
+    match /placementReviews/{placementReviewId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    function healthcareStaff() {
+      return ownerOrAdmin() || hasRole("Manager") || hasRole("Clinician") || hasRole("Nurse") || hasRole("Reception") || hasRole("Billing");
+    }
+
+    match /healthcareProfiles/{profileId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if ownerOrAdmin()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /patientIdentities/{patientId} {
+      allow read: if sameInstitution(resource.data.institutionId) && healthcareStaff();
+      allow create, update: if healthcareStaff()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /healthcareEncounters/{encounterId} {
+      allow read: if sameInstitution(resource.data.institutionId) && healthcareStaff();
+      allow create, update: if healthcareStaff()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /healthcareServices/{serviceId} {
+      allow read: if sameInstitution(resource.data.institutionId) && healthcareStaff();
+      allow create, update: if (ownerOrAdmin() || hasRole("Manager"))
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /healthcareQueue/{queueEntryId} {
+      allow read: if sameInstitution(resource.data.institutionId) && healthcareStaff();
+      allow create, update: if healthcareStaff()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /healthcareServicePoints/{servicePointId} {
+      allow read: if sameInstitution(resource.data.institutionId) && healthcareStaff();
+      allow create, update: if (ownerOrAdmin() || hasRole("Manager") || hasRole("Reception"))
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /healthcareResources/{resourceId} {
+      allow read: if sameInstitution(resource.data.institutionId) && healthcareStaff();
+      allow create, update: if (ownerOrAdmin() || hasRole("Manager") || hasRole("Billing"))
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /clinicalRecords/{clinicalRecordId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse"));
+      allow create, update: if (hasRole("Clinician") || hasRole("Nurse") || ownerOrAdmin())
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /billingReferences/{billingReferenceId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasRole("Manager") || hasRole("Billing"));
+      allow create, update: if (ownerOrAdmin() || hasRole("Manager") || hasRole("Billing"))
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /healthcareDocuments/{healthcareDocumentId} {
+      allow read: if sameInstitution(resource.data.institutionId) && healthcareStaff();
+      allow create, update: if healthcareStaff()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
     match /tasks/{taskId} {
       allow read: if sameInstitution(resource.data.institutionId);
       allow create: if signedIn()
@@ -112,5 +323,265 @@ service cloud.firestore {
       allow delete: if ownerOrAdmin()
         && sameInstitution(resource.data.institutionId);
     }
+
+    match /plannerEvents/{eventId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (
+          !hasRole("Employee")
+          || resource.data.departmentId == null
+          || (resource.data.attendees != null && request.auth.uid in resource.data.attendees)
+        );
+      allow create: if signedIn()
+        && request.resource.data.eventId == eventId
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && request.resource.data.createdBy == request.auth.uid
+        && (
+          ownerOrAdmin()
+          || (
+            hasRole("Manager")
+            && request.resource.data.departmentId == userDoc(request.auth.uid).data.departmentId
+          )
+        );
+      allow update: if sameInstitution(resource.data.institutionId)
+        && request.resource.data.eventId == resource.data.eventId
+        && request.resource.data.institutionId == resource.data.institutionId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && (
+          ownerOrAdmin()
+          || (
+            managerOfDepartment(resource.data.departmentId)
+            && resource.data.departmentId == userDoc(request.auth.uid).data.departmentId
+            && request.resource.data.departmentId == resource.data.departmentId
+          )
+        );
+      allow delete: if sameInstitution(resource.data.institutionId)
+        && (
+          ownerOrAdmin()
+          || managerOfDepartment(resource.data.departmentId)
+        );
+    }
+
+    match /approvals/{approvalId} {
+      allow create: if signedIn()
+        && request.resource.data.approvalId == approvalId
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (
+          request.auth.uid == request.resource.data.requesterUid
+          || ownerOrAdmin()
+          || (hasRole("Manager") && request.resource.data.departmentId == userDoc(request.auth.uid).data.departmentId)
+        );
+      allow read: if signedIn()
+        && sameInstitution(resource.data.institutionId)
+        && (
+          request.auth.uid == resource.data.requesterUid
+          || request.auth.uid == resource.data.approverUid
+          || request.auth.uid == resource.data.assigneeUid
+          || ownerOrAdmin()
+          || (hasRole("Manager") && resource.data.departmentId == userDoc(request.auth.uid).data.departmentId)
+        );
+      allow update: if signedIn()
+        && sameInstitution(resource.data.institutionId)
+        && request.resource.data.approvalId == resource.data.approvalId
+        && request.resource.data.institutionId == resource.data.institutionId
+        && (
+          ownerOrAdmin()
+          || request.auth.uid == resource.data.requesterUid
+          || request.auth.uid == resource.data.approverUid
+          || request.auth.uid == resource.data.assigneeUid
+        );
+      allow delete: if sameInstitution(resource.data.institutionId) && ownerOrAdmin();
+
+      match /audit/{entryId} {
+        allow read: if signedIn() && sameInstitution(get(/databases/$(database)/documents/approvals/$(approvalId)).data.institutionId);
+        allow create, update: if signedIn()
+          && request.resource.data.eventId == entryId
+          && get(/databases/$(database)/documents/approvals/$(approvalId)).data.institutionId == userDoc(request.auth.uid).data.institutionId
+          && (
+            ownerOrAdmin()
+            || request.auth.uid == get(/databases/$(database)/documents/approvals/$(approvalId)).data.requesterUid
+            || request.auth.uid == get(/databases/$(database)/documents/approvals/$(approvalId)).data.approverUid
+          );
+        allow delete: if false;
+      }
+    }
+
+    match /conversations/{conversationId} {
+      allow read: if signedIn()
+        && sameInstitution(resource.data.institutionId)
+        && (
+          request.auth.uid in resource.data.participantIds
+          || resource.data.type == "institution_wide"
+          || (resource.data.type == "department"
+            && resource.data.departmentId == userDoc(request.auth.uid).data.departmentId)
+        );
+      allow create: if signedIn()
+        && request.resource.data.conversationId == conversationId
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (request.auth.uid in request.resource.data.participantIds || request.resource.data.type == "institution_wide")
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.type in ["direct", "department", "institution_wide"]
+        && (
+          request.resource.data.type == "institution_wide"
+          || request.resource.data.type == "direct"
+          || ownerOrAdmin()
+          || (
+            hasRole("Manager")
+            && request.resource.data.departmentId == userDoc(request.auth.uid).data.departmentId
+          )
+        );
+      allow update: if signedIn()
+        && sameInstitution(resource.data.institutionId)
+        && request.auth.uid in resource.data.participantIds
+        && request.resource.data.conversationId == resource.data.conversationId
+        && request.resource.data.institutionId == resource.data.institutionId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["lastMessagePreview", "lastMessageAt", "title"]);
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if signedIn()
+          && get(/databases/$(database)/documents/conversations/$(conversationId)).data.institutionId == userDoc(request.auth.uid).data.institutionId
+          && (
+            request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds
+            || get(/databases/$(database)/documents/conversations/$(conversationId)).data.type == "institution_wide"
+            || (get(/databases/$(database)/documents/conversations/$(conversationId)).data.type == "department"
+              && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.departmentId == get(/databases/$(database)/documents/conversations/$(conversationId)).data.departmentId)
+          );
+        allow create: if signedIn()
+          && request.resource.data.messageId == messageId
+          && request.resource.data.conversationId == conversationId
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.institutionId == get(/databases/$(database)/documents/conversations/$(conversationId)).data.institutionId
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds
+          && request.resource.data.type in ["text", "call_link"]
+          && (request.resource.data.type == "text" || request.resource.data.callUrl is string);
+        allow update, delete: if false;
+      }
+
+      // Documents collection: tenant-scoped, role-aware access control
+      match /documents/{documentId} {
+        allow create: if signedIn()
+          && request.resource.data.documentId == documentId
+          && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+          && request.resource.data.uploadedBy == request.auth.uid
+          && request.resource.data.status in ["UPLOADED","QUEUED","PROCESSING","EXTRACTED","NEEDS_REVIEW","VALIDATED","VERIFIED","AVAILABLE","FAILED","UNSUPPORTED","REJECTED"]
+          && request.resource.data.size is number
+          && request.resource.data.storagePath is string;
+
+        allow read: if signedIn()
+          && sameInstitution(resource.data.institutionId)
+          && (
+            ownerOrAdmin()
+            || request.auth.uid == resource.data.uploadedBy
+            || (resource.data.departmentId == null)
+            || (hasRole("Manager") && userDoc(request.auth.uid).data.departmentId == resource.data.departmentId)
+            || (resource.data.allowedViewers != null && request.auth.uid in resource.data.allowedViewers)
+          );
+
+        allow update: if signedIn()
+          && sameInstitution(resource.data.institutionId)
+          && request.resource.data.documentId == resource.data.documentId
+          && request.resource.data.institutionId == resource.data.institutionId
+          && (
+            ownerOrAdmin()
+            || request.auth.uid == resource.data.uploadedBy
+          );
+
+        allow delete: if sameInstitution(resource.data.institutionId) && ownerOrAdmin();
+      }
+
+      match /bulkImportBatches/{batchId} {
+        // Bulk import batches are institution-scoped and only Owners/Admins may create and manage batches
+        allow create: if signedIn()
+          && request.resource.data.batchId == batchId
+          && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.status in ["pending_review", "confirmed", "created", "rejected"];
+
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId) && (
+          ownerOrAdmin()
+          || request.auth.uid == resource.data.createdBy
+        );
+
+        allow update: if signedIn() && sameInstitution(resource.data.institutionId) && (
+          ownerOrAdmin() || request.auth.uid == resource.data.createdBy
+        );
+
+        allow delete: if signedIn() && sameInstitution(resource.data.institutionId) && ownerOrAdmin();
+      }
+
+      match /securityEvents/{eventId} {
+        // Security events are institution-scoped; creators must be signed-in and match institution
+        allow create: if signedIn()
+          && request.resource.data.eventId == eventId
+          && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+          && request.resource.data.type in ["login","logout","failed_login","password_change","recovery_request","recovery_completion","workspace_lock","workspace_unlock","sensitive_action","role_change","account_deactivation","account_reactivation","session_revocation"];
+
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId) && (
+          ownerOrAdmin() || request.auth.uid == resource.data.uid
+        );
+
+        allow update, delete: if false;
+      }
+
+    }
+
+    match /bills/{billId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId)
+          && (ownerOrAdmin() || request.auth.uid == resource.data.customerUid);
+        allow create: if signedIn()
+          && request.resource.data.billId == billId
+          && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+          && request.resource.data.total is number
+          && request.resource.data.currency is string;
+        allow update: if signedIn() && sameInstitution(resource.data.institutionId) && ownerOrAdmin()
+          && request.resource.data.billId == resource.data.billId
+          && request.resource.data.institutionId == resource.data.institutionId;
+        allow delete: if false;
+      }
+
+    match /payments/{paymentId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId)
+          && (ownerOrAdmin() || request.auth.uid == resource.data.customerUid);
+        allow create, update, delete: if false;
+      }
+
+    match /paymentIdempotency/{idempotencyId} {
+        allow read, write: if false;
+      }
+
+    match /paymentWebhookEvents/{eventId} {
+        allow read, write: if false;
+      }
+
+    match /refunds/{refundId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId)
+          && (ownerOrAdmin() || request.auth.uid == resource.data.requestedBy);
+        allow create: if signedIn()
+          && request.resource.data.refundId == refundId
+          && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+          && ownerOrAdmin();
+        allow update, delete: if false;
+      }
+
+    match /receipts/{receiptId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId)
+          && (ownerOrAdmin() || request.auth.uid == resource.data.customerUid);
+        allow write: if false;
+      }
+
+    match /financialEvents/{eventId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId) && ownerOrAdmin();
+        allow write: if false;
+      }
+
+    match /financialReconciliations/{reconciliationId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId) && ownerOrAdmin();
+        allow write: if false;
+      }
+
+    match /financialExceptions/{exceptionId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId) && ownerOrAdmin();
+        allow write: if false;
+      }
   }
 }
