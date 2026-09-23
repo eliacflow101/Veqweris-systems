@@ -21,6 +21,10 @@ service cloud.firestore {
       return hasRole("Owner") || hasRole("Admin");
     }
 
+    function setupOperator() {
+      return ownerOrAdmin() || hasRole("Manager");
+    }
+
     function managerOfDepartment(departmentId) {
       return hasRole("Manager")
         && userDoc(request.auth.uid).data.departmentId == departmentId;
@@ -834,6 +838,28 @@ service cloud.firestore {
     match /retailSales/{recordId} {
       allow read: if signedIn() && sameInstitution(resource.data.institutionId);
       allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+
+    match /setupConfigs/{institutionId} {
+      allow read: if sameInstitution(institutionId);
+      allow create, update: if sameInstitution(institutionId) && setupOperator()
+        && request.resource.data.institutionId == institutionId;
+      allow delete: if false;
+    }
+
+    match /setupRequirements/{requirementId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if signedIn() && setupOperator()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && request.resource.data.requirementId == requirementId;
+      allow delete: if false;
+    }
+    match /setupRecommendations/{recommendationId} {
+      allow read: if sameInstitution(resource.data.institutionId);
+      allow create, update: if setupOperator()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && request.resource.data.recommendationId == recommendationId;
       allow delete: if false;
     }
   }

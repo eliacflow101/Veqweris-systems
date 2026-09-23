@@ -12,7 +12,8 @@
     "test:storage-rules": "tsx tests/storage.rules.test.ts",
     "test:payments": "tsx tests/payment-engine.test.ts",
     "test:analytics": "tsx tests/analytics-engine.test.ts",
-    "test:governance": "tsx tests/governance-engine.test.ts"
+    "test:governance": "tsx tests/governance-engine.test.ts",
+    "test:setup": "tsx tests/setup-engine.test.ts"
   },
   "dependencies": {
     "firebase": "^12.19.0",
