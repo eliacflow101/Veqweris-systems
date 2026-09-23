@@ -869,5 +869,23 @@ service cloud.firestore {
         && request.resource.data.recommendationId == recommendationId;
       allow delete: if false;
     }
+
+    // Notifications are tenant-scoped and recipients may only mutate their own inbox.
+    match /notifications/{notificationId} {
+      allow read: if signedIn()
+        && sameInstitution(resource.data.institutionId)
+        && resource.data.recipientUid == request.auth.uid;
+      allow create: if signedIn()
+        && sameInstitution(request.resource.data.institutionId)
+        && request.resource.data.recipientUid == request.auth.uid
+        && request.resource.data.notificationId == notificationId;
+      allow update: if signedIn()
+        && sameInstitution(resource.data.institutionId)
+        && resource.data.recipientUid == request.auth.uid
+        && request.resource.data.institutionId == resource.data.institutionId
+        && request.resource.data.recipientUid == resource.data.recipientUid
+        && request.resource.data.eventId == resource.data.eventId;
+      allow delete: if false;
+    }
   }
 }

@@ -21,6 +21,7 @@ import {
   HeartPulse,
   Hotel,
   Activity,
+  Bell,
 } from "lucide-react";
 import type { UserRole } from "@/lib/firebase/models";
 
@@ -49,6 +50,7 @@ export const navigationConfig: NavigationItem[] = [
   { label: "Tasks", href: "/tasks", icon: ListTodo, section: "Workspace", requiredModule: "tasks", dataScope: "institution", allowedRoles: ["Owner", "Admin", "Manager", "Employee"], visibility: "visible" },
   { label: "Planner", href: "/planner", icon: FolderKanban, section: "Workspace", requiredModule: "planner", dataScope: "institution", allowedRoles: ["Owner", "Admin", "Manager", "Employee"], visibility: "visible" },
   { label: "Messages", href: "/messages", icon: MessageSquare, section: "Workspace", requiredModule: "messages", dataScope: "institution", allowedRoles: ["Owner", "Admin", "Manager", "Employee"], visibility: "visible" },
+  { label: "Notifications", href: "/notifications", icon: Bell, section: "Workspace", requiredModule: "notifications", dataScope: "institution", allowedRoles: ["Owner", "Admin", "Manager", "Employee"], visibility: "visible" },
   { label: "Documents", href: "/documents", icon: FileText, section: "Information", requiredModule: "documents", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner","Admin","Manager","Employee"], dataScope: "institution" },
   { label: "Documents review", href: "/documents/review", icon: FileText, section: "Information", requiredModule: "documents", visibility: "visible", allowedRoles: ["Owner", "Admin", "Manager"], dataScope: "institution" },
   { label: "Reports", href: "/reports", icon: ChartNoAxesCombined, section: "Information", requiredModule: "reports", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },

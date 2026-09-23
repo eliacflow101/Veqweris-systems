@@ -15,6 +15,7 @@
     "test:governance": "tsx tests/governance-engine.test.ts",
     "test:setup": "tsx tests/setup-engine.test.ts"
     ,"test:operational-intelligence": "tsx tests/operational-intelligence.test.ts"
+    ,"test:notifications": "tsx tests/notifications-engine.test.ts"
   },
   "dependencies": {
     "firebase": "^12.19.0",
