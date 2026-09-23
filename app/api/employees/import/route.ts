@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { buildImportPreview } from "@/lib/people-engine";
+import { verifyActiveSession } from "@/lib/firebase/server-auth";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_IMPORT_EXTENSIONS = new Set(["csv", "xls", "xlsx"]);
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "You must be signed in." }, { status: 401 });
     }
 
-    const decoded = await adminAuth.verifyIdToken(sessionToken);
+    const decoded = await verifyActiveSession(sessionToken);
     const userSnapshot = await adminDb.collection("users").doc(decoded.uid).get();
     const userData = userSnapshot.data();
 

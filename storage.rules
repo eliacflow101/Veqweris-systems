@@ -1,0 +1,39 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function sameInstitution(institutionId) {
+      return signedIn() && userDoc().data.institutionId == institutionId;
+    }
+
+    function ownerOrAdmin() {
+      return signedIn() && userDoc().data.role in ["Owner", "Admin"];
+    }
+
+    match /quarantine/{institutionId}/{fileName} {
+      allow read: if sameInstitution(institutionId)
+        && (ownerOrAdmin() || userDoc().data.status == "active");
+      allow write: if sameInstitution(institutionId)
+        && userDoc().data.status == "active"
+        && request.resource.size > 0
+        && request.resource.size <= 25 * 1024 * 1024
+        && request.resource.contentType.matches("^(text/csv|application/vnd.ms-excel|application/vnd.openxmlformats-officedocument.spreadsheetml.sheet|application/pdf|image/.*)$");
+      allow delete: if ownerOrAdmin();
+    }
+
+    match /documents/{institutionId}/{fileName} {
+      allow read: if sameInstitution(institutionId) && userDoc().data.status == "active";
+      allow write: if ownerOrAdmin()
+        && request.resource.size > 0
+        && request.resource.size <= 25 * 1024 * 1024;
+      allow delete: if ownerOrAdmin();
+    }
+  }
+}

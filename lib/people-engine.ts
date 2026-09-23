@@ -80,7 +80,7 @@ export function buildImportPreview(rows: Record<string, unknown>[], existing: Bu
 }
 
 export function generateInstitutionBoundEmployeeId(institutionId: string, fullName: string, existingIds: string[] = []) {
-  const base = `${institutionId.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8)}-${fullName
+  const base = `${institutionId.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 16)}-${fullName
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
@@ -90,7 +90,8 @@ export function generateInstitutionBoundEmployeeId(institutionId: string, fullNa
 }
 
 export function assessDuplicateState(candidate: Pick<BulkImportCandidate, "institutionEmployeeId" | "fullName" | "officialEmail" | "phone" | "department" | "role">, existing: BulkImportCandidate[]) {
-  if (!candidate.institutionEmployeeId && !candidate.officialEmail && !candidate.phone) return "Missing Identifier" as DuplicateState;
+  const hasIdentifier = Boolean(candidate.institutionEmployeeId || candidate.officialEmail || candidate.phone);
+  if (!hasIdentifier) return candidate.department && candidate.role ? "Needs Review" as DuplicateState : "Missing Identifier" as DuplicateState;
   const exactEmail = existing.find((item) => item.officialEmail && item.officialEmail.toLowerCase() === candidate.officialEmail?.toLowerCase());
   const phoneNormalized = candidate.phone ? candidate.phone.replace(/\D/g, "") : null;
   const exactPhone = phoneNormalized ? existing.find((item) => item.phone && item.phone.replace(/\D/g, "") === phoneNormalized) : null;

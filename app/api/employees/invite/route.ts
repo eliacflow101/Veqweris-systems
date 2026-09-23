@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import type { UserRole } from "@/lib/firebase/models";
+import { verifyActiveSession } from "@/lib/firebase/server-auth";
 
 const invitedRoles: UserRole[] = ["Admin", "Manager", "Employee"];
 
@@ -23,7 +24,7 @@ export async function POST(request: Request) {
     const sessionToken = (await cookies()).get("__session")?.value;
     if (!sessionToken) return NextResponse.json({ error: "You must be signed in." }, { status: 401 });
 
-    const inviter = await adminAuth.verifyIdToken(sessionToken);
+    const inviter = await verifyActiveSession(sessionToken);
     const inviterSnapshot = await adminDb.collection("users").doc(inviter.uid).get();
     const inviterProfile = inviterSnapshot.data();
     if (!inviterSnapshot.exists || !inviterProfile || !["Owner", "Admin"].includes(inviterProfile.role)) {

@@ -3,6 +3,7 @@ import { adminDb, adminAuth } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { cookies } from "next/headers";
 import { runDocumentProcessingPipeline } from "@/lib/documents/processing";
+import { verifyActiveSession } from "@/lib/firebase/server-auth";
 
 async function getSessionToken(req: Request) {
   const authHeader = req.headers.get("authorization") || "";
@@ -20,7 +21,7 @@ export async function POST(req: Request) {
 
     const token = await getSessionToken(req);
     if (!token) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    const decoded = await adminAuth!.verifyIdToken(token);
+    const decoded = await verifyActiveSession(token);
     const uid = decoded.uid;
 
     const userSnap = await adminDb!.collection("users").doc(uid).get();

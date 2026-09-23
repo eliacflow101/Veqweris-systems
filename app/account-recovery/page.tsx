@@ -1,16 +1,16 @@
 "use client";
 
-import { collection, getDocs, query, where } from "@firebase/firestore";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { db } from "@/lib/firebase/client";
 
 export default function AccountRecoveryPage() {
   const [email, setEmail] = useState("");
   const [institutionId, setInstitutionId] = useState("");
   const [status, setStatus] = useState<string | null>(null);
+  const [token, setToken] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -23,24 +23,39 @@ export default function AccountRecoveryPage() {
     setError(null);
     setStatus(null);
     try {
-      if (!db) throw new Error("Firebase is not configured.");
-      const snapshot = await getDocs(query(collection(db, "users"), where("email", "==", email.trim().toLowerCase())));
-      const userDoc = snapshot.docs[0]?.data() as { institutionId?: string; status?: string } | undefined;
-      if (!userDoc) {
-        setError("No matching institution account found for that email.");
-        return;
-      }
-      if (userDoc.institutionId !== institutionId.trim()) {
-        setError("Recovery request rejected: institution identity mismatch.");
-        return;
-      }
-      if (userDoc.status && userDoc.status !== "active") {
-        setError("This account is not active and cannot be recovered immediately.");
-        return;
-      }
-      setStatus("Recovery verified. Use the institution-approved recovery flow to continue.");
+      const response = await fetch("/api/auth/recovery/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, institutionId }),
+      });
+      const result = await response.json() as { error?: string; message?: string; token?: string };
+      if (!response.ok) throw new Error(result.error || "Recovery could not be requested.");
+      if (result.token) setToken(result.token);
+      setStatus(result.token ? "Recovery token issued. Set a new password below." : result.message || "If the account exists, recovery instructions will be issued.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Recovery could not be validated.");
+    } finally {
+      setLoading(false);
+    }
+
+  }
+
+  async function complete() {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/auth/recovery/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, institutionId, password }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Unable to complete recovery.");
+      setStatus("Password reset completed. Existing sessions were revoked; sign in again.");
+      setToken("");
+      setPassword("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to complete recovery.");
     } finally {
       setLoading(false);
     }
@@ -58,6 +73,11 @@ export default function AccountRecoveryPage() {
           {error && <p className="text-sm text-danger">{error}</p>}
           {status && <p className="text-sm text-success">{status}</p>}
           <Button type="button" className="w-full bg-accent text-white" onClick={() => void submit()} disabled={loading}>{loading ? "Verifying…" : "Verify recovery"}</Button>
+          {token && <div className="space-y-3 border-t border-line pt-4">
+            <Input value={token} onChange={(event) => setToken(event.target.value)} placeholder="Recovery token" />
+            <Input type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="New password (8+ characters)" />
+            <Button type="button" className="w-full bg-accent text-white" onClick={() => void complete()} disabled={loading || password.length < 8}>Set new password</Button>
+          </div>}
         </div>
       </Card>
     </main>

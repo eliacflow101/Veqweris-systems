@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { createPeopleDirectoryEntry } from "@/lib/people-engine";
+import { verifyActiveSession } from "@/lib/firebase/server-auth";
 
 export async function POST(request: Request) {
   try {
@@ -12,7 +13,7 @@ export async function POST(request: Request) {
     const sessionToken = (await cookies()).get("__session")?.value;
     if (!sessionToken) return NextResponse.json({ error: "You must be signed in." }, { status: 401 });
 
-    const decoded = await adminAuth.verifyIdToken(sessionToken);
+    const decoded = await verifyActiveSession(sessionToken);
     const userSnapshot = await adminDb.collection("users").doc(decoded.uid).get();
     const userData = userSnapshot.data();
     if (!userSnapshot.exists || !userData || !["Owner", "Admin"].includes(userData.role)) {

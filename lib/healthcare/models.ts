@@ -84,6 +84,87 @@ export interface HealthcareDocument {
   createdAt: unknown;
 }
 
+export type LaboratoryRequestStatus = "requested" | "authorized" | "sample_collected" | "processing" | "result_entered" | "verified" | "released" | "cancelled";
+
+export interface LaboratoryRequest {
+  laboratoryRequestId: string;
+  institutionId: string;
+  patientId: string;
+  encounterId?: string | null;
+  serviceId?: string | null;
+  requestedBy: string;
+  status: LaboratoryRequestStatus;
+  sensitivity: HealthcareSensitivity;
+  createdAt: unknown;
+  updatedAt: unknown;
+}
+
+export interface LaboratorySample {
+  sampleId: string;
+  laboratoryRequestId: string;
+  institutionId: string;
+  patientId: string;
+  specimenType: string;
+  accessionNumber: string;
+  status: "collected" | "received" | "processing" | "processed" | "rejected";
+  collectedBy: string;
+  collectedAt: unknown;
+  updatedAt: unknown;
+}
+
+export interface LaboratoryResult {
+  laboratoryResultId: string;
+  laboratoryRequestId: string;
+  sampleId: string;
+  institutionId: string;
+  patientId: string;
+  values: Record<string, string | number | boolean>;
+  enteredBy: string;
+  verifiedBy?: string | null;
+  releasedBy?: string | null;
+  status: "draft" | "entered" | "verified" | "released";
+  sensitivity: HealthcareSensitivity;
+  createdAt: unknown;
+  updatedAt: unknown;
+}
+
+export interface PharmacyMedicine {
+  medicineId: string;
+  institutionId: string;
+  name: string;
+  form: string;
+  strength: string;
+  inventoryItemId: string;
+  active: boolean;
+  createdAt: unknown;
+}
+
+export interface PharmacyBatch {
+  batchId: string;
+  medicineId: string;
+  institutionId: string;
+  batchNumber: string;
+  expiryDate: string;
+  inventoryItemId: string;
+  status: "available" | "quarantined" | "expired" | "recalled";
+  receivedAt: unknown;
+}
+
+export interface PharmacyDispense {
+  dispenseId: string;
+  institutionId: string;
+  medicineId: string;
+  batchId: string;
+  inventoryMovementId: string;
+  patientId: string;
+  prescriptionReference?: string | null;
+  quantity: number;
+  dispensedBy: string;
+  status: "requested" | "approved" | "dispensed" | "returned" | "cancelled";
+  createdAt: unknown;
+  updatedAt: unknown;
+}
+
 export interface HealthcareQueueEntry {
   queueEntryId: string;
   institutionId: string;

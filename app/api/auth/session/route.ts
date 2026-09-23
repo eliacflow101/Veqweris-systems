@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { adminAuth } from "@/lib/firebase/admin";
 import { getSessionMaxAgeSeconds } from "@/lib/identity";
+import { registerSession } from "@/lib/firebase/server-auth";
 
 export async function POST(request: Request) {
   try {
     const { token, sessionPolicy } = await request.json();
     if (!adminAuth) return NextResponse.json({ error: "Firebase server is not configured." }, { status: 503 });
-    const decoded = await adminAuth.verifyIdToken(token);
+    const decoded = await adminAuth.verifyIdToken(token, true);
     const maxAgeSeconds = getSessionMaxAgeSeconds(sessionPolicy ?? "7_days");
+    await registerSession(token, decoded, maxAgeSeconds || 60 * 60 * 24 * 7);
     const response = NextResponse.json({ uid: decoded.uid, sessionPolicy: sessionPolicy ?? "7_days" });
     response.cookies.set("__session", token, {
       httpOnly: true,

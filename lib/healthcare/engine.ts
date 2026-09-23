@@ -1,4 +1,5 @@
 import type { HealthcareRecordKind, HealthcareSensitivity } from "./models";
+import type { LaboratoryRequestStatus, LaboratoryResult } from "./models";
 
 export type HealthcareRole = "Owner" | "Admin" | "Manager" | "Employee" | "Clinician" | "Nurse" | "Reception" | "Billing";
 
@@ -99,4 +100,23 @@ export function calculateHealthcareReadiness(input: {
   ] as const;
   const missing = checks.filter(([, ready]) => !ready).map(([label]) => label);
   return { ready: missing.length === 0, completed: checks.length - missing.length, total: checks.length, missing };
+}
+
+const laboratoryTransitions: Record<LaboratoryRequestStatus, LaboratoryRequestStatus[]> = {
+  requested: ["authorized", "cancelled"],
+  authorized: ["sample_collected", "cancelled"],
+  sample_collected: ["processing", "cancelled"],
+  processing: ["result_entered", "cancelled"],
+  result_entered: ["verified", "processing"],
+  verified: ["released"],
+  released: [],
+  cancelled: [],
+};
+
+export function canTransitionLaboratoryRequest(from: LaboratoryRequestStatus, to: LaboratoryRequestStatus) {
+  return laboratoryTransitions[from].includes(to);
+}
+
+export function canReleaseLaboratoryResult(result: Pick<LaboratoryResult, "status" | "verifiedBy">) {
+  return result.status === "verified" && Boolean(result.verifiedBy);
 }

@@ -289,6 +289,64 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /laboratoryRequests/{requestId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse") || hasRole("Laboratory") || hasRole("Billing"));
+      allow create: if signedIn()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse") || hasRole("Reception"));
+      allow update: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse") || hasRole("Laboratory"));
+      allow delete: if false;
+    }
+
+    match /laboratorySamples/{sampleId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse") || hasRole("Laboratory"));
+      allow create, update: if signedIn()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasRole("Nurse") || hasRole("Laboratory"));
+      allow delete: if false;
+    }
+
+    match /laboratoryResults/{resultId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse") || hasRole("Laboratory"));
+      allow create: if signedIn()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasRole("Laboratory"));
+      allow update: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasRole("Laboratory") || hasRole("Clinician"));
+      allow delete: if false;
+    }
+
+    match /pharmacyMedicines/{medicineId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasRole("Pharmacist") || hasRole("Manager") || hasRole("Clinician") || hasRole("Billing"));
+      allow create, update: if signedIn()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasRole("Pharmacist") || hasRole("Manager"));
+      allow delete: if false;
+    }
+
+    match /pharmacyBatches/{batchId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasRole("Pharmacist") || hasRole("Manager") || hasRole("Clinician"));
+      allow create, update: if signedIn()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasRole("Pharmacist") || hasRole("Manager"));
+      allow delete: if false;
+    }
+
+    match /pharmacyDispenses/{dispenseId} {
+      allow read: if sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || hasRole("Pharmacist") || hasRole("Clinician") || hasRole("Billing"));
+      allow create, update: if signedIn()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && (ownerOrAdmin() || hasRole("Pharmacist"));
+      allow delete: if false;
+    }
+
     match /tasks/{taskId} {
       allow read: if sameInstitution(resource.data.institutionId);
       allow create: if signedIn()
@@ -521,6 +579,49 @@ service cloud.firestore {
         );
 
         allow update, delete: if false;
+      }
+
+      match /securitySessions/{sessionId} {
+        allow read: if signedIn()
+          && sameInstitution(resource.data.institutionId)
+          && (ownerOrAdmin() || request.auth.uid == resource.data.uid);
+        allow create, update, delete: if false;
+      }
+
+      match /recoveryRequests/{requestId} {
+        allow read, write: if false;
+      }
+
+      match /terminalProfiles/{terminalId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow write: if false;
+      }
+
+      match /terminalSessions/{sessionId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId)
+          && (ownerOrAdmin() || request.auth.uid == resource.data.uid);
+        allow write: if false;
+      }
+
+      match /inventoryItems/{itemId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow create, update: if signedIn()
+          && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+          && (ownerOrAdmin() || hasRole("Manager") || hasRole("Operator") || hasRole("Service Worker"));
+        allow delete: if ownerOrAdmin();
+      }
+
+      match /inventoryMovements/{movementId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow create, update, delete: if false;
+      }
+
+      match /inventoryReservations/{reservationId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow create, update: if signedIn()
+          && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+          && (ownerOrAdmin() || hasRole("Manager") || hasRole("Operator"));
+        allow delete: if false;
       }
 
     }

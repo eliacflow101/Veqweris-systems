@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { db } from "./client";
 import type { ApprovalRecord, ApprovalStatus, Conversation, Department, Institution, Message, PlannerEvent, SecurityEvent, SecurityEventType, Task, UserProfile, TaskStatus, TaskPriority, UserPreferences } from "./models";
 import type { AcademicEnrollment, AcademicLevelRecord, AcademicYear, CurriculumRecord, GuardianRecord, PlacementReview, SchoolClassRecord, SchoolProfile, StreamRecord, StudentGuardianLink, StudentRecord, SubjectRecord } from "@/lib/school";
-import type { BillingReference, ClinicalRecord, HealthcareDocument, HealthcareEncounter, HealthcareQueueEntry, HealthcareResource, HealthcareService, HealthcareServicePoint, HealthcareWorkspaceProfile, PatientIdentity } from "@/lib/healthcare";
+import type { BillingReference, ClinicalRecord, HealthcareDocument, HealthcareEncounter, HealthcareQueueEntry, HealthcareResource, HealthcareService, HealthcareServicePoint, HealthcareWorkspaceProfile, LaboratoryRequest, LaboratoryResult, LaboratorySample, PatientIdentity, PharmacyBatch, PharmacyDispense, PharmacyMedicine } from "@/lib/healthcare";
 
 export function useCollectionData<T>(path: string, institutionId?: string) {
   const [data, setData] = useState<T[]>([]);
@@ -86,6 +86,14 @@ export const useHealthcareResources = (institutionId?: string) => useCollectionD
 export const useClinicalRecords = (institutionId?: string) => useCollectionData<ClinicalRecord>("clinicalRecords", institutionId);
 export const useBillingReferences = (institutionId?: string) => useCollectionData<BillingReference>("billingReferences", institutionId);
 export const useHealthcareDocuments = (institutionId?: string) => useCollectionData<HealthcareDocument>("healthcareDocuments", institutionId);
+export const useLaboratoryRequests = (institutionId?: string) => useCollectionData<LaboratoryRequest>("laboratoryRequests", institutionId);
+export const useLaboratorySamples = (institutionId?: string) => useCollectionData<LaboratorySample>("laboratorySamples", institutionId);
+export const useLaboratoryResults = (institutionId?: string) => useCollectionData<LaboratoryResult>("laboratoryResults", institutionId);
+export const usePharmacyMedicines = (institutionId?: string) => useCollectionData<PharmacyMedicine>("pharmacyMedicines", institutionId);
+export const usePharmacyBatches = (institutionId?: string) => useCollectionData<PharmacyBatch>("pharmacyBatches", institutionId);
+export const usePharmacyDispenses = (institutionId?: string) => useCollectionData<PharmacyDispense>("pharmacyDispenses", institutionId);
+export const useInventoryItems = (institutionId?: string) => useCollectionData<Record<string, unknown>>("inventoryItems", institutionId);
+export const useInventoryMovements = (institutionId?: string) => useCollectionData<Record<string, unknown>>("inventoryMovements", institutionId);
 
 export async function saveSchoolRecord<T extends object & { institutionId: string }>(collectionName: string, input: T, idField: string, id?: string) {
   if (!db) throw new Error("Firebase is not configured.");

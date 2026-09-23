@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminDb, adminStorage, adminAuth } from "@/lib/firebase/admin";
 import { cookies } from "next/headers";
+import { verifyActiveSession } from "@/lib/firebase/server-auth";
 
 async function getSessionToken(req: Request) {
   const authHeader = req.headers.get("authorization") || "";
@@ -23,7 +24,7 @@ export async function GET(req: Request) {
   try {
     const token = await getSessionToken(req);
     if (!token) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    const decoded = await adminAuth!.verifyIdToken(token);
+    const decoded = await verifyActiveSession(token);
     const userSnap = await adminDb.collection("users").doc(decoded.uid).get();
     if (!userSnap.exists) return NextResponse.json({ error: "User not found" }, { status: 403 });
     const user = userSnap.data()!;
