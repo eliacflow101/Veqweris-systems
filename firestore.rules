@@ -626,6 +626,20 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      match /analyticsSnapshots/{snapshotId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow create: if signedIn() && ownerOrAdmin()
+          && sameInstitution(request.resource.data.institutionId)
+          && request.resource.data.metricId is string
+          && request.resource.data.snapshotId == snapshotId;
+        allow update, delete: if false;
+      }
+
+      match /analyticsExportAudit/{exportId} {
+        allow read: if signedIn() && ownerOrAdmin() && sameInstitution(resource.data.institutionId);
+        allow create, update, delete: if false;
+      }
+
       match /recoveryRequests/{requestId} {
         allow read, write: if false;
       }

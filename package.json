@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test:rules": "tsx tests/firestore.rules.test.ts",
     "test:storage-rules": "tsx tests/storage.rules.test.ts",
-    "test:payments": "tsx tests/payment-engine.test.ts"
+    "test:payments": "tsx tests/payment-engine.test.ts",
+    "test:analytics": "tsx tests/analytics-engine.test.ts"
   },
   "dependencies": {
     "firebase": "^12.19.0",
