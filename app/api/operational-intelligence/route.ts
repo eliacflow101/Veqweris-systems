@@ -2,7 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
-import { buildOperationalCues, calculateOperationalLoad, createOperationalEvent, detectResourceConflicts, evaluateReadinessMatrix, simulateScenario } from "@/lib/operational-intelligence";
+import { buildOperationalCues, calculateOperationalLoad, createOperationalEvent, createOperationalFlow, detectResourceConflicts, evaluateReadinessMatrix, simulateScenario } from "@/lib/operational-intelligence";
 
 async function authenticate(request: Request) {
   if (!adminDb) throw new Error("SERVICE_UNAVAILABLE");
@@ -39,9 +39,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ event }, { status: 201 });
     }
     if (body.action === "simulation") {
-      const simulation = simulateScenario({ institutionId: profile.institutionId, label: String(body.label), scenario: String(body.scenario), assumptions: Array.isArray(body.assumptions) ? body.assumptions.map(String) : [], outcomes: Array.isArray(body.outcomes) ? body.outcomes.map(String) : [] });
+      const simulation = simulateScenario({ institutionId: profile.institutionId, label: String(body.label), type: (body.type ?? "demand_spike") as never, scenario: String(body.scenario), assumptions: Array.isArray(body.assumptions) ? body.assumptions.map(String) : [], outcomes: Array.isArray(body.outcomes) ? body.outcomes.map(String) : [] });
       await adminDb!.collection("operationalIntelligence").doc(simulation.simulationId).set({ recordType: "simulation", simulation, createdBy: decoded.uid, createdAt: FieldValue.serverTimestamp() });
       return NextResponse.json({ simulation }, { status: 201 });
+    }
+    if (body.action === "flow") {
+      const flow = createOperationalFlow({ institutionId: profile.institutionId, sourceEventId: String(body.sourceEventId), stage: body.stage as never, linkedId: String(body.linkedId), evidenceIds: Array.isArray(body.evidenceIds) ? body.evidenceIds.map(String) : [], occurredAt: String(body.occurredAt ?? new Date().toISOString()) });
+      await adminDb!.collection("operationalIntelligence").doc(flow.flowId).set({ recordType: "flow", flow, createdBy: decoded.uid, createdAt: FieldValue.serverTimestamp() });
+      return NextResponse.json({ flow }, { status: 201 });
     }
     return NextResponse.json({ error: "Unsupported operational intelligence action." }, { status: 400 });
   } catch (error) { console.error("Unable to write operational intelligence.", error); return failure(error); }
