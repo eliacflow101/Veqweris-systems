@@ -913,5 +913,62 @@ service cloud.firestore {
       allow read: if signedIn() && sameInstitution(resource.data.institutionId);
       allow write: if false;
     }
+
+    // Network profiles are an intentionally small public directory surface.
+    // Operational and personal collections remain covered by their tenant rules.
+    match /networkProfiles/{institutionId} {
+      allow read: if signedIn() && resource.data.institutionId == institutionId
+        && !(resource.data.trustState in ["Restricted", "Suspended", "Revoked"]);
+      allow create, update: if ownerOrAdmin()
+        && userDoc(request.auth.uid).data.institutionId == institutionId
+        && request.resource.data.institutionId == institutionId
+        && request.resource.data.keys().hasOnly(["institutionId", "institutionName", "broadLocation", "selectedServices", "participation", "contactEnabled", "trustState", "updatedAt"]);
+      allow delete: if false;
+    }
+
+    match /assistanceRequests/{requestId} {
+      allow read: if signedIn() && (resource.data.requesterInstitutionId == userDoc(request.auth.uid).data.institutionId
+        || resource.data.requestedInstitutionId == userDoc(request.auth.uid).data.institutionId);
+      allow create: if ownerOrAdmin()
+        && request.resource.data.requesterInstitutionId == userDoc(request.auth.uid).data.institutionId
+        && request.resource.data.requestId == requestId;
+      allow update: if ownerOrAdmin()
+        && (resource.data.requesterInstitutionId == userDoc(request.auth.uid).data.institutionId
+          || resource.data.requestedInstitutionId == userDoc(request.auth.uid).data.institutionId)
+        && request.resource.data.requesterInstitutionId == resource.data.requesterInstitutionId
+        && request.resource.data.requestedInstitutionId == resource.data.requestedInstitutionId;
+      allow delete: if false;
+    }
+
+    match /networkMemberships/{membershipId} {
+      allow read: if signedIn() && (resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        || resource.data.memberInstitutionId == userDoc(request.auth.uid).data.institutionId);
+      allow write: if false;
+    }
+
+    match /dataSharingPermissions/{permissionId} {
+      allow read: if signedIn() && (resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        || resource.data.counterpartyInstitutionId == userDoc(request.auth.uid).data.institutionId);
+      allow write: if false;
+    }
+
+    function contractParticipant(contract) {
+      return signedIn() && (contract.institutionAId == userDoc(request.auth.uid).data.institutionId
+        || contract.institutionBId == userDoc(request.auth.uid).data.institutionId);
+    }
+
+    match /collaborationContracts/{contractId} {
+      allow read: if contractParticipant(resource.data);
+      allow write: if false;
+    }
+
+    match /networkWorkspaceRecords/{recordId} {
+      allow read: if signedIn()
+        && exists(/databases/$(database)/documents/collaborationContracts/$(resource.data.contractId))
+        && get(/databases/$(database)/documents/collaborationContracts/$(resource.data.contractId)).data.status == "active"
+        && contractParticipant(get(/databases/$(database)/documents/collaborationContracts/$(resource.data.contractId)).data)
+        && resource.data.scope in get(/databases/$(database)/documents/collaborationContracts/$(resource.data.contractId)).data.scopes;
+      allow write: if false;
+    }
   }
 }

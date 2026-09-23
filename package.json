@@ -17,6 +17,7 @@
     "test:integrations": "tsx tests/integration-gateway.test.ts"
     ,"test:operational-intelligence": "tsx tests/operational-intelligence.test.ts"
     ,"test:notifications": "tsx tests/notifications-engine.test.ts"
+    ,"test:network": "tsx tests/network-engine.test.ts"
   },
   "dependencies": {
     "firebase": "^12.19.0",
