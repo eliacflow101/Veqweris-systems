@@ -8,6 +8,8 @@ import { db } from "./client";
 import type { ApprovalRecord, ApprovalStatus, Conversation, Department, Institution, Message, PlannerEvent, SecurityEvent, SecurityEventType, Task, UserProfile, TaskStatus, TaskPriority, UserPreferences } from "./models";
 import type { AcademicEnrollment, AcademicLevelRecord, AcademicYear, CurriculumRecord, GuardianRecord, PlacementReview, SchoolClassRecord, SchoolProfile, StreamRecord, StudentGuardianLink, StudentRecord, SubjectRecord } from "@/lib/school";
 import type { BillingReference, ClinicalRecord, HealthcareDocument, HealthcareEncounter, HealthcareQueueEntry, HealthcareResource, HealthcareService, HealthcareServicePoint, HealthcareWorkspaceProfile, LaboratoryRequest, LaboratoryResult, LaboratorySample, PatientIdentity, PharmacyBatch, PharmacyDispense, PharmacyMedicine } from "@/lib/healthcare";
+import type { HospitalityOrder, HotelReservation, HotelRoom, HospitalityOutlet, HousekeepingTask, MaintenanceTicket } from "@/lib/hospitality";
+import type { RetailCatalogItem, RetailSale } from "@/lib/retail";
 
 export function useCollectionData<T>(path: string, institutionId?: string) {
   const [data, setData] = useState<T[]>([]);
@@ -94,6 +96,14 @@ export const usePharmacyBatches = (institutionId?: string) => useCollectionData<
 export const usePharmacyDispenses = (institutionId?: string) => useCollectionData<PharmacyDispense>("pharmacyDispenses", institutionId);
 export const useInventoryItems = (institutionId?: string) => useCollectionData<Record<string, unknown>>("inventoryItems", institutionId);
 export const useInventoryMovements = (institutionId?: string) => useCollectionData<Record<string, unknown>>("inventoryMovements", institutionId);
+export const useHospitalityRooms = (institutionId?: string) => useCollectionData<HotelRoom>("hotelRooms", institutionId);
+export const useHospitalityReservations = (institutionId?: string) => useCollectionData<HotelReservation>("hotelReservations", institutionId);
+export const useHospitalityOutlets = (institutionId?: string) => useCollectionData<HospitalityOutlet>("hospitalityOutlets", institutionId);
+export const useHospitalityOrders = (institutionId?: string) => useCollectionData<HospitalityOrder>("hospitalityOrders", institutionId);
+export const useHousekeepingTasks = (institutionId?: string) => useCollectionData<HousekeepingTask>("housekeepingTasks", institutionId);
+export const useMaintenanceTickets = (institutionId?: string) => useCollectionData<MaintenanceTicket>("maintenanceTickets", institutionId);
+export const useRetailCatalog = (institutionId?: string) => useCollectionData<RetailCatalogItem>("retailCatalogItems", institutionId);
+export const useRetailSales = (institutionId?: string) => useCollectionData<RetailSale>("retailSales", institutionId);
 
 export async function saveSchoolRecord<T extends object & { institutionId: string }>(collectionName: string, input: T, idField: string, id?: string) {
   if (!db) throw new Error("Firebase is not configured.");
@@ -109,6 +119,14 @@ export async function saveHealthcareRecord<T extends object & { institutionId: s
   const createdAt = "createdAt" in input ? input.createdAt : undefined;
   await setDoc(ref, { ...input, [idField]: ref.id, updatedAt: serverTimestamp(), createdAt: createdAt ?? serverTimestamp() }, { merge: Boolean(id) });
   return ref.id;
+}
+
+export async function saveHospitalityRecord<T extends object & { institutionId: string }>(collectionName: string, input: T, idField: string, id?: string) {
+  return saveHealthcareRecord(collectionName, input, idField, id);
+}
+
+export async function saveRetailRecord<T extends object & { institutionId: string }>(collectionName: string, input: T, idField: string, id?: string) {
+  return saveHealthcareRecord(collectionName, input, idField, id);
 }
 
 export async function createLaboratoryRequest(input: Omit<LaboratoryRequest, "laboratoryRequestId" | "createdAt" | "updatedAt">) {

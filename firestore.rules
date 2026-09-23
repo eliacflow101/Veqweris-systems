@@ -722,5 +722,51 @@ service cloud.firestore {
         allow read: if signedIn() && sameInstitution(resource.data.institutionId) && ownerOrAdmin();
         allow write: if false;
       }
+
+    function hospitalityStaff() {
+      return ownerOrAdmin() || hasRole("Manager") || hasRole("Employee")
+        || hasRole("Operator") || hasRole("Service Worker");
+    }
+
+    match /hotelRooms/{recordId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if ownerOrAdmin();
+    }
+    match /hotelReservations/{recordId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if ownerOrAdmin();
+    }
+    match /hospitalityOutlets/{recordId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if ownerOrAdmin();
+    }
+    match /hospitalityOrders/{recordId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+    match /housekeepingTasks/{recordId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+    match /maintenanceTickets/{recordId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
+    match /retailCatalogItems/{recordId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if ownerOrAdmin();
+    }
+    match /retailSales/{recordId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow delete: if false;
+    }
   }
 }

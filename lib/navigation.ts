@@ -18,6 +18,7 @@ import {
   Wallet,
   School,
   HeartPulse,
+  Hotel,
 } from "lucide-react";
 import type { UserRole } from "@/lib/firebase/models";
 
@@ -54,6 +55,7 @@ export const navigationConfig: NavigationItem[] = [
   { label: "Inventory", href: "/inventory", icon: Boxes, section: "Operations", requiredModule: "inventory", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
   { label: "School", href: "/school", icon: School, section: "Operations", requiredModule: "school", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
   { label: "Healthcare", href: "/healthcare", icon: HeartPulse, section: "Operations", requiredModule: "healthcare", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee", "Clinician", "Nurse", "Reception", "Billing", "Laboratory", "Pharmacist"], dataScope: "institution" },
+  { label: "Hospitality & retail", href: "/hospitality", icon: Hotel, section: "Operations", requiredModule: "hospitality", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
   { label: "Students & enrollment", href: "/school/students", icon: School, section: "Operations", requiredModule: "school", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager"], dataScope: "institution" },
   { label: "School operations", href: "/school/operations", icon: School, section: "Operations", requiredModule: "school", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
   { label: "School academics", href: "/school/academics", icon: School, section: "Operations", requiredModule: "school", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
