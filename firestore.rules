@@ -640,6 +640,60 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      match /governanceChains/{chainId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow create, update: if signedIn() && ownerOrAdmin()
+          && sameInstitution(request.resource.data.institutionId)
+          && request.resource.data.chainId == chainId;
+        allow delete: if false;
+      }
+
+      match /governanceFindings/{findingId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow create, update: if signedIn() && (ownerOrAdmin() || hasRole("Manager"))
+          && sameInstitution(request.resource.data.institutionId)
+          && request.resource.data.findingId == findingId;
+        allow delete: if false;
+      }
+
+      match /governanceEvidence/{evidenceId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow create: if signedIn() && ownerOrAdmin()
+          && sameInstitution(request.resource.data.institutionId)
+          && request.resource.data.evidenceId == evidenceId;
+        allow update, delete: if false;
+      }
+
+      match /governanceAuditEvents/{eventId} {
+        allow read: if signedIn() && ownerOrAdmin() && sameInstitution(resource.data.institutionId);
+        allow create, update, delete: if false;
+      }
+
+      match /governanceDataQuality/{issueId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow create, update: if signedIn() && ownerOrAdmin() && sameInstitution(request.resource.data.institutionId);
+        allow delete: if false;
+      }
+
+      match /governanceConflicts/{conflictId} {
+        allow read: if signedIn() && ownerOrAdmin() && sameInstitution(resource.data.institutionId);
+        allow create, update: if signedIn() && ownerOrAdmin() && sameInstitution(request.resource.data.institutionId);
+        allow delete: if false;
+      }
+
+      match /breakGlassAccess/{accessId} {
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId)
+          && (ownerOrAdmin() || resource.data.uid == request.auth.uid);
+        allow create: if signedIn() && ownerOrAdmin()
+          && sameInstitution(request.resource.data.institutionId)
+          && request.resource.data.accessId == accessId
+          && request.resource.data.reason is string
+          && request.resource.data.reason.size() > 0
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt > request.time;
+        allow update, delete: if false;
+      }
+
       match /recoveryRequests/{requestId} {
         allow read, write: if false;
       }
