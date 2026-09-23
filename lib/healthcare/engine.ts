@@ -1,7 +1,8 @@
 import type { HealthcareRecordKind, HealthcareSensitivity } from "./models";
 import type { LaboratoryRequestStatus, LaboratoryResult } from "./models";
+import type { UserRole } from "@/lib/firebase/models";
 
-export type HealthcareRole = "Owner" | "Admin" | "Manager" | "Employee" | "Clinician" | "Nurse" | "Reception" | "Billing";
+export type HealthcareRole = Extract<UserRole, "Owner" | "Admin" | "Manager" | "Employee" | "Clinician" | "Nurse" | "Reception" | "Billing" | "Laboratory" | "Pharmacist">;
 
 export interface HealthcareAccessInput {
   role: string;
@@ -11,6 +12,8 @@ export interface HealthcareAccessInput {
   hasSensitivePermission?: boolean;
   departmentId?: string | null;
   recordDepartmentId?: string | null;
+  specialtyId?: string | null;
+  recordSpecialtyId?: string | null;
   patientId?: string | null;
   assignedPatientIds?: string[];
 }
@@ -24,6 +27,8 @@ const roleKinds: Record<HealthcareRole, HealthcareRecordKind[]> = {
   Nurse: ["patient", "encounter", "clinical", "document"],
   Reception: ["patient", "encounter", "service"],
   Billing: ["patient", "encounter", "service", "billing"],
+  Laboratory: ["patient", "encounter", "service", "clinical", "document"],
+  Pharmacist: ["patient", "encounter", "service", "billing", "document"],
 };
 
 export function getHealthcareScope(role: string): { role: string; recordKinds: HealthcareRecordKind[]; scope: "institution" | "department" | "assigned" | "none" } {
@@ -39,6 +44,7 @@ export function canAccessHealthcareRecord(input: HealthcareAccessInput) {
   if (input.sensitivity !== "standard" && !input.hasSensitivePermission) return { allowed: false, reason: "Sensitive healthcare permission is required." };
   if (scope.scope === "department" && input.departmentId !== input.recordDepartmentId) return { allowed: false, reason: "Record is outside the user's department scope." };
   if (scope.scope === "assigned" && (!input.patientId || !input.assignedPatientIds?.includes(input.patientId))) return { allowed: false, reason: "Patient is not assigned to the user." };
+  if (input.recordSpecialtyId && input.specialtyId !== input.recordSpecialtyId) return { allowed: false, reason: "Record is outside the user's specialty scope." };
   return { allowed: true, reason: "Healthcare record access is allowed." };
 }
 

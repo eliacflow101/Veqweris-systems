@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
-import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { getSessionToken, verifyActiveSession, verifyTerminalSession } from "@/lib/firebase/server-auth";
 
 export async function POST(request: Request) {
   try {
@@ -11,7 +11,18 @@ export async function POST(request: Request) {
     if (!token) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     const decoded = await verifyActiveSession(token);
     const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
-    const body = await request.json() as { action?: "register" | "revoke"; terminalId?: string; label?: string; scope?: string };
+    const body = await request.json() as { action?: "register" | "revoke" | "validate" | "lock"; terminalId?: string; sessionId?: string; label?: string; scope?: string };
+    if (body.action === "validate") {
+      if (!body.sessionId) return NextResponse.json({ error: "sessionId is required." }, { status: 400 });
+      const session = await verifyTerminalSession(body.sessionId, decoded, profile?.institutionId ?? "");
+      return NextResponse.json({ valid: true, ...session });
+    }
+    if (body.action === "lock") {
+      if (!body.sessionId) return NextResponse.json({ error: "sessionId is required." }, { status: 400 });
+      const session = await verifyTerminalSession(body.sessionId, decoded, profile?.institutionId ?? "");
+      await adminDb.collection("terminalSessions").doc(session.sessionId).update({ autoLockAt: Timestamp.fromMillis(Date.now() - 1), updatedAt: FieldValue.serverTimestamp() });
+      return NextResponse.json({ sessionId: session.sessionId, status: "locked" });
+    }
     const terminalId = body.terminalId?.trim();
     if (!terminalId) return NextResponse.json({ error: "terminalId is required." }, { status: 400 });
     const terminalRef = adminDb.collection("terminalProfiles").doc(terminalId);

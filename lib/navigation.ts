@@ -19,8 +19,9 @@ import {
   School,
   HeartPulse,
 } from "lucide-react";
+import type { UserRole } from "@/lib/firebase/models";
 
-export type NavigationRole = "Owner" | "Admin" | "Manager" | "Employee";
+export type NavigationRole = UserRole;
 
 export type NavigationItem = {
   label: string;
@@ -52,7 +53,7 @@ export const navigationConfig: NavigationItem[] = [
   { label: "Settings", href: "/settings", icon: ServerCog, section: "Control", requiredModule: "settings", visibility: "visible" },
   { label: "Inventory", href: "/inventory", icon: Boxes, section: "Operations", requiredModule: "inventory", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
   { label: "School", href: "/school", icon: School, section: "Operations", requiredModule: "school", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
-  { label: "Healthcare", href: "/healthcare", icon: HeartPulse, section: "Operations", requiredModule: "healthcare", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
+  { label: "Healthcare", href: "/healthcare", icon: HeartPulse, section: "Operations", requiredModule: "healthcare", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee", "Clinician", "Nurse", "Reception", "Billing", "Laboratory", "Pharmacist"], dataScope: "institution" },
   { label: "Students & enrollment", href: "/school/students", icon: School, section: "Operations", requiredModule: "school", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager"], dataScope: "institution" },
   { label: "School operations", href: "/school/operations", icon: School, section: "Operations", requiredModule: "school", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
   { label: "School academics", href: "/school/academics", icon: School, section: "Operations", requiredModule: "school", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },

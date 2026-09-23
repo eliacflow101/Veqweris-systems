@@ -24,16 +24,17 @@ service firebase.storage {
         && userDoc().data.status == "active"
         && request.resource.size > 0
         && request.resource.size <= 25 * 1024 * 1024
+        && request.resource.contentType != null
         && request.resource.contentType.matches("^(text/csv|application/vnd.ms-excel|application/vnd.openxmlformats-officedocument.spreadsheetml.sheet|application/pdf|image/.*)$");
-      allow delete: if ownerOrAdmin();
+      allow delete: if sameInstitution(institutionId) && ownerOrAdmin();
     }
 
     match /documents/{institutionId}/{fileName} {
       allow read: if sameInstitution(institutionId) && userDoc().data.status == "active";
-      allow write: if ownerOrAdmin()
+      allow write: if sameInstitution(institutionId) && ownerOrAdmin()
         && request.resource.size > 0
         && request.resource.size <= 25 * 1024 * 1024;
-      allow delete: if ownerOrAdmin();
+      allow delete: if sameInstitution(institutionId) && ownerOrAdmin();
     }
   }
 }

@@ -3,6 +3,33 @@ import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
 
+function serialize(value: unknown): unknown {
+  if (value && typeof value === "object" && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function") {
+    return (value as { toDate: () => Date }).toDate().toISOString();
+  }
+  return value;
+}
+
+export async function GET(request: Request) {
+  try {
+    if (!adminDb) return NextResponse.json({ error: "Firebase server is not configured." }, { status: 503 });
+    const token = await getSessionToken(request);
+    if (!token) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+    const decoded = await verifyActiveSession(token);
+    const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
+    if (!profile?.institutionId) return NextResponse.json({ error: "Institution profile required." }, { status: 403 });
+    const snapshot = await adminDb.collection("inventoryItems").where("institutionId", "==", profile.institutionId).get();
+    const items = snapshot.docs.map((doc) => {
+      const data = doc.data();
+      return Object.fromEntries(Object.entries({ ...data, id: data.id || doc.id, itemId: data.itemId || doc.id }).map(([key, value]) => [key, serialize(value)]));
+    });
+    return NextResponse.json({ items });
+  } catch (reason) {
+    console.error("Unable to load inventory items.", reason);
+    return NextResponse.json({ error: "Unable to load inventory items." }, { status: 400 });
+  }
+}
+
 export async function POST(request: Request) {
   try {
     if (!adminDb) return NextResponse.json({ error: "Firebase server is not configured." }, { status: 503 });

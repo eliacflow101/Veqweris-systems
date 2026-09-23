@@ -17,10 +17,12 @@ const adminUid = "admin-a";
 const managerUid = "manager-a";
 const employeeUid = "employee-a";
 const otherUid = "user-b";
+const clinicianUid = "clinician-a";
+const nurseUid = "nurse-a";
 
 let testEnv: RulesTestEnvironment;
 
-function userData(uid: string, role: "Owner" | "Admin" | "Manager" | "Employee", institutionId: string) {
+function userData(uid: string, role: "Owner" | "Admin" | "Manager" | "Employee" | "Clinician" | "Nurse", institutionId: string, extra: Record<string, unknown> = {}) {
   return {
     uid,
     institutionId,
@@ -31,6 +33,7 @@ function userData(uid: string, role: "Owner" | "Admin" | "Manager" | "Employee",
     lastActive: new Date(),
     status: "active",
     createdAt: new Date(),
+    ...extra,
   };
 }
 
@@ -115,6 +118,8 @@ async function seedData() {
       [managerUid, "Manager", institutionA],
       [employeeUid, "Employee", institutionA],
       [otherUid, "Employee", institutionB],
+      [clinicianUid, "Clinician", institutionA],
+      [nurseUid, "Nurse", institutionA],
     ] as const) {
       await setDoc(doc(db, "users", uid), userData(uid, role, institutionId));
     }
@@ -127,6 +132,16 @@ async function seedData() {
     await setDoc(doc(db, "plannerEvents", "event-wide"), plannerEventData("event-wide", institutionA, null, ownerUid));
     await setDoc(doc(db, "plannerEvents", "event-other-department"), plannerEventData("event-other-department", institutionA, "department-c", ownerUid));
     await setDoc(doc(db, "plannerEvents", "event-b"), plannerEventData("event-b", institutionB, "department-b", otherUid, [otherUid]));
+    await setDoc(doc(db, "clinicalRecords", "clinical-a"), {
+      clinicalRecordId: "clinical-a", institutionId: institutionA, patientId: "patient-a",
+      encounterId: "encounter-a", recordType: "note", summary: "restricted", sensitivity: "sensitive",
+      specialtyId: "cardiology", authoredBy: clinicianUid, createdAt: new Date(),
+    });
+    await setDoc(doc(db, "clinicalRecords", "clinical-standard"), {
+      clinicalRecordId: "clinical-standard", institutionId: institutionA, patientId: "patient-b",
+      encounterId: "encounter-b", recordType: "note", summary: "standard", sensitivity: "standard",
+      authoredBy: ownerUid, createdAt: new Date(),
+    });
   });
 }
 
@@ -176,6 +191,22 @@ test("Owner and Admin can modify another user in their institution", async () =>
   const adminDb = testEnv.authenticatedContext(adminUid).firestore();
   await assertSucceeds(setDoc(doc(ownerDb, "users", employeeUid), { status: "active" }, { merge: true }));
   await assertSucceeds(setDoc(doc(adminDb, "users", managerUid), { status: "active" }, { merge: true }));
+});
+
+test("healthcare access enforces assignment, specialty, sensitivity, and institution", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, "users", clinicianUid), userData(clinicianUid, "Clinician", institutionA, {
+      assignedPatientIds: ["patient-a"], specialtyId: "cardiology", healthcarePermissions: ["sensitive"],
+    }));
+    await setDoc(doc(db, "users", nurseUid), userData(nurseUid, "Nurse", institutionA, {
+      assignedPatientIds: ["patient-b"], specialtyId: "general",
+    }));
+  });
+  await assertSucceeds(getDoc(doc(testEnv.authenticatedContext(clinicianUid).firestore(), "clinicalRecords", "clinical-a")));
+  await assertFails(getDoc(doc(testEnv.authenticatedContext(nurseUid).firestore(), "clinicalRecords", "clinical-a")));
+  await assertFails(getDoc(doc(testEnv.authenticatedContext(employeeUid).firestore(), "clinicalRecords", "clinical-standard")));
+  await assertFails(getDoc(doc(testEnv.authenticatedContext(otherUid).firestore(), "clinicalRecords", "clinical-standard")));
 });
 
 test("unauthenticated requests cannot read or write anything", async () => {

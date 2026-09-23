@@ -159,6 +159,7 @@ export interface PharmacyDispense {
   patientId: string;
   prescriptionReference?: string | null;
   quantity: number;
+  sensitivity: HealthcareSensitivity;
   dispensedBy: string;
   status: "requested" | "approved" | "dispensed" | "returned" | "cancelled";
   createdAt: unknown;

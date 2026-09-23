@@ -57,5 +57,21 @@ declare module "firebase/storage" {
     readonly app: FirebaseApp;
   }
 
+  export interface StorageReference {
+    readonly fullPath: string;
+  }
+
+  export interface UploadMetadata {
+    contentType?: string;
+  }
+
   export function getStorage(app?: FirebaseApp): FirebaseStorage;
+  export function ref(storage: FirebaseStorage, path: string): StorageReference;
+  export function uploadBytes(
+    reference: StorageReference,
+    data: Uint8Array,
+    metadata?: UploadMetadata,
+  ): Promise<unknown>;
+  export function getMetadata(reference: StorageReference): Promise<unknown>;
+  export function deleteObject(reference: StorageReference): Promise<void>;
 }

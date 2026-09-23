@@ -20,6 +20,11 @@ import {
   useHealthcareServicePoints,
   useHealthcareServices,
   usePatientIdentities,
+  useLaboratoryRequests,
+  usePharmacyMedicines,
+  usePharmacyBatches,
+  usePharmacyDispenses,
+  useInventoryItems,
 } from "@/lib/firebase/data";
 import { buildHealthcareDashboardMetrics, calculateHealthcareReadiness, generateHealthcarePatientNumber } from "@/lib/healthcare";
 
@@ -36,6 +41,11 @@ export default function HealthcarePage() {
   const clinical = useClinicalRecords(institutionId);
   const billing = useBillingReferences(institutionId);
   const documents = useHealthcareDocuments(institutionId);
+  const laboratoryRequests = useLaboratoryRequests(institutionId);
+  const pharmacyMedicines = usePharmacyMedicines(institutionId);
+  const pharmacyBatches = usePharmacyBatches(institutionId);
+  const pharmacyDispenses = usePharmacyDispenses(institutionId);
+  const inventoryItems = useInventoryItems(institutionId);
   const readiness = calculateHealthcareReadiness({
     institutionConfigured: Boolean(institutionId),
     profileConfigured: Boolean(healthcare.data?.configured),
@@ -63,10 +73,14 @@ export default function HealthcarePage() {
     ["Clinical records", clinical.data.length],
     ["Billing references", billing.data.length],
     ["Documents", documents.data.length],
+    ["Lab requests", laboratoryRequests.data.length],
+    ["Pharmacy dispenses", pharmacyDispenses.data.length],
   ];
   const [patientForm, setPatientForm] = useState({ fullName: "", phone: "", dateOfBirth: "", sex: "" });
   const [encounterForm, setEncounterForm] = useState({ patientId: "", departmentId: "", encounterType: "outpatient", status: "open" });
   const [queueForm, setQueueForm] = useState({ patientId: "", servicePointId: "", serviceId: "", priority: "routine" });
+  const [labForm, setLabForm] = useState({ patientId: "", serviceId: "", sensitivity: "standard" });
+  const [dispenseForm, setDispenseForm] = useState({ patientId: "", medicineId: "", batchId: "", quantity: "1" });
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -142,6 +156,42 @@ export default function HealthcarePage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function createLaboratoryRequest() {
+      if (!institutionId || !labForm.patientId || !profile?.uid) return;
+      setSaving(true); setMessage(null);
+      try {
+        await saveHealthcareRecord("laboratoryRequests", {
+          institutionId, laboratoryRequestId: "", patientId: labForm.patientId,
+          encounterId: null, serviceId: labForm.serviceId || null, requestedBy: profile.uid,
+          status: "requested", sensitivity: labForm.sensitivity, createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }, "laboratoryRequestId");
+        setMessage("Laboratory request created for the existing lab workflow.");
+        setLabForm({ patientId: "", serviceId: "", sensitivity: "standard" });
+      } catch (error) { setMessage(error instanceof Error ? error.message : "Unable to create laboratory request."); }
+      finally { setSaving(false); }
+    }
+
+  async function createPharmacyDispense() {
+      if (!institutionId || !dispenseForm.patientId || !dispenseForm.medicineId || !dispenseForm.batchId || !profile?.uid) return;
+      const batch = pharmacyBatches.data.find((item) => item.batchId === dispenseForm.batchId);
+      if (!batch) return;
+      setSaving(true); setMessage(null);
+      try {
+        await saveHealthcareRecord("pharmacyDispenses", {
+          institutionId, dispenseId: "", patientId: dispenseForm.patientId,
+          medicineId: dispenseForm.medicineId, batchId: dispenseForm.batchId,
+          inventoryMovementId: null, prescriptionReference: null,
+          quantity: Math.max(1, Number(dispenseForm.quantity) || 1), dispensedBy: profile.uid,
+          sensitivity: "standard",
+          status: "requested", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        }, "dispenseId");
+        setMessage("Pharmacy dispense request created; stock remains in the shared inventory system.");
+        setDispenseForm({ patientId: "", medicineId: "", batchId: "", quantity: "1" });
+      } catch (error) { setMessage(error instanceof Error ? error.message : "Unable to create pharmacy request."); }
+      finally { setSaving(false); }
   }
 
   const servicePointOptions = servicePoints.data.length ? servicePoints.data : [{ servicePointId: "triage", name: "Triage desk", departmentId: null, queueMode: "single", active: true, createdAt: new Date().toISOString() }];
@@ -254,6 +304,28 @@ export default function HealthcarePage() {
         <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">Healthcare record families</h3>
         <div className="mt-4 grid gap-2 md:grid-cols-3">{counts.map(([label, value]) => <div key={String(label)} className="rounded-md border border-line bg-surface-raised p-3"><p className="text-xs text-muted">{label}</p><p className="mt-1 text-xl font-semibold text-ink">{value}</p></div>)}</div>
       </Card>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card className="p-5">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">Laboratory request</h3>
+          <p className="mt-2 text-xs text-muted">{laboratoryRequests.data.length} requests · lifecycle and results remain in the laboratory collections.</p>
+          <div className="mt-4 space-y-3">
+            <select value={labForm.patientId} onChange={(event) => setLabForm({ ...labForm, patientId: event.target.value })} className="w-full rounded-md border border-line bg-surface p-2 text-sm text-ink"><option value="">Select patient</option>{patients.data.map((patient) => <option key={patient.patientId} value={patient.patientId}>{patient.fullName}</option>)}</select>
+            <select value={labForm.serviceId} onChange={(event) => setLabForm({ ...labForm, serviceId: event.target.value })} className="w-full rounded-md border border-line bg-surface p-2 text-sm text-ink"><option value="">Select service</option>{services.data.map((service) => <option key={service.serviceId} value={service.serviceId}>{service.name}</option>)}</select>
+            <select value={labForm.sensitivity} onChange={(event) => setLabForm({ ...labForm, sensitivity: event.target.value })} className="w-full rounded-md border border-line bg-surface p-2 text-sm text-ink"><option value="standard">Standard</option><option value="sensitive">Sensitive</option><option value="highly_sensitive">Highly sensitive</option></select>
+            <Button onClick={createLaboratoryRequest} disabled={saving || !labForm.patientId}>Create lab request</Button>
+          </div>
+        </Card>
+        <Card className="p-5">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">Pharmacy dispense</h3>
+          <p className="mt-2 text-xs text-muted">{pharmacyDispenses.data.length} dispense requests · {inventoryItems.data.length} shared inventory items, no duplicate stock ledger.</p>
+          <div className="mt-4 space-y-3">
+            <select value={dispenseForm.patientId} onChange={(event) => setDispenseForm({ ...dispenseForm, patientId: event.target.value })} className="w-full rounded-md border border-line bg-surface p-2 text-sm text-ink"><option value="">Select patient</option>{patients.data.map((patient) => <option key={patient.patientId} value={patient.patientId}>{patient.fullName}</option>)}</select>
+            <select value={dispenseForm.medicineId} onChange={(event) => setDispenseForm({ ...dispenseForm, medicineId: event.target.value, batchId: "" })} className="w-full rounded-md border border-line bg-surface p-2 text-sm text-ink"><option value="">Select medicine</option>{pharmacyMedicines.data.map((medicine) => <option key={medicine.medicineId} value={medicine.medicineId}>{medicine.name} {medicine.strength}</option>)}</select>
+            <select value={dispenseForm.batchId} onChange={(event) => setDispenseForm({ ...dispenseForm, batchId: event.target.value })} className="w-full rounded-md border border-line bg-surface p-2 text-sm text-ink"><option value="">Select batch</option>{pharmacyBatches.data.filter((batch) => !dispenseForm.medicineId || batch.medicineId === dispenseForm.medicineId).map((batch) => <option key={batch.batchId} value={batch.batchId}>{batch.batchNumber} · {batch.expiryDate}</option>)}</select>
+            <div className="flex gap-3"><Input type="number" min="1" value={dispenseForm.quantity} onChange={(event) => setDispenseForm({ ...dispenseForm, quantity: event.target.value })} /><Button onClick={createPharmacyDispense} disabled={saving || !dispenseForm.patientId || !dispenseForm.batchId}>Request dispense</Button></div>
+          </div>
+        </Card>
+      </div>
       {!readiness.ready && <EmptyState title="Complete healthcare setup before daily work" description={`No records are created by this dashboard. Configure: ${readiness.missing.join(", ")}.`} />}
     </div>
   );

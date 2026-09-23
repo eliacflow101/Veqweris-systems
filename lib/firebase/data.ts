@@ -111,6 +111,18 @@ export async function saveHealthcareRecord<T extends object & { institutionId: s
   return ref.id;
 }
 
+export async function createLaboratoryRequest(input: Omit<LaboratoryRequest, "laboratoryRequestId" | "createdAt" | "updatedAt">) {
+  return saveHealthcareRecord("laboratoryRequests", input, "laboratoryRequestId");
+}
+
+export async function createPharmacyDispense(input: Omit<PharmacyDispense, "dispenseId" | "createdAt" | "updatedAt" | "inventoryMovementId" | "dispensedBy" | "status"> & {
+  dispensedBy: string;
+  status: PharmacyDispense["status"];
+  inventoryMovementId: string;
+}) {
+  return saveHealthcareRecord("pharmacyDispenses", input, "dispenseId");
+}
+
 export function useConversations(institutionId?: string, uid?: string, role?: UserProfile["role"], departmentId?: string | null) {
   const [data, setData] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);

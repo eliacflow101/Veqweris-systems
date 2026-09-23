@@ -2,6 +2,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { recoveryDelivery } from "@/lib/auth/recovery-delivery";
 
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_REQUESTS = 5;
@@ -48,7 +49,9 @@ export async function POST(request: Request) {
       createdAt: FieldValue.serverTimestamp(),
       expiresAt: Timestamp.fromMillis(now + 15 * 60 * 1000),
     });
-    if (process.env.NODE_ENV !== "production") {
+    const expiresAt = new Date(now + 15 * 60 * 1000);
+    await recoveryDelivery.deliver({ email, institutionId, token: rawToken, expiresAt });
+    if (process.env.NODE_ENV !== "production" && process.env.RECOVERY_EXPOSE_TOKEN === "true") {
       return NextResponse.json({ message: "Recovery token issued for development verification.", token: rawToken });
     }
     return NextResponse.json({ message: "If the account exists, recovery instructions will be issued." });

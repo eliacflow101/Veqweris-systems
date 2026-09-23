@@ -9,6 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:rules": "tsx tests/firestore.rules.test.ts",
+    "test:storage-rules": "tsx tests/storage.rules.test.ts",
     "test:payments": "tsx tests/payment-engine.test.ts"
   },
   "dependencies": {

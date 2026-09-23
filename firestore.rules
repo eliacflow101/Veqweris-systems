@@ -26,6 +26,47 @@ service cloud.firestore {
         && userDoc(request.auth.uid).data.departmentId == departmentId;
     }
 
+    function healthcareRole() {
+      return ownerOrAdmin() || hasRole("Manager") || hasRole("Clinician") || hasRole("Nurse")
+        || hasRole("Reception") || hasRole("Billing") || hasRole("Laboratory") || hasRole("Pharmacist");
+    }
+
+    function healthcareSensitiveAccess() {
+      return ownerOrAdmin()
+        || ("healthcarePermissions" in userDoc(request.auth.uid).data
+          && "sensitive" in userDoc(request.auth.uid).data.healthcarePermissions)
+        || ("healthcarePermissions" in userDoc(request.auth.uid).data
+          && "highly_sensitive" in userDoc(request.auth.uid).data.healthcarePermissions);
+    }
+
+    function healthcareRecordScope(record) {
+      return sameInstitution(record.institutionId)
+        && healthcareRole()
+        && (record.sensitivity == "standard" || healthcareSensitiveAccess())
+        && (!("departmentId" in record)
+          || record.departmentId == null
+          || ownerOrAdmin()
+          || (hasRole("Manager") && userDoc(request.auth.uid).data.departmentId == record.departmentId)
+          || (hasRole("Clinician") || hasRole("Nurse"))
+          || hasRole("Reception") || hasRole("Billing") || hasRole("Laboratory") || hasRole("Pharmacist"));
+    }
+
+    function assignedPatient(record) {
+      return !("patientId" in record)
+        || !(hasRole("Clinician") || hasRole("Nurse"))
+        || ("assignedPatientIds" in userDoc(request.auth.uid).data
+          && record.patientId in userDoc(request.auth.uid).data.assignedPatientIds);
+    }
+
+    function specialtyScope(record) {
+      return !("specialtyId" in record) || record.specialtyId == null
+        || ownerOrAdmin()
+        || (("specialtyId" in userDoc(request.auth.uid).data)
+          && userDoc(request.auth.uid).data.specialtyId == record.specialtyId)
+        || (("specialtyIds" in userDoc(request.auth.uid).data)
+          && record.specialtyId in userDoc(request.auth.uid).data.specialtyIds);
+    }
+
     match /institutions/{institutionId} {
       allow create: if signedIn()
         && request.resource.data.institutionId == institutionId
@@ -214,7 +255,7 @@ service cloud.firestore {
     }
 
     function healthcareStaff() {
-      return ownerOrAdmin() || hasRole("Manager") || hasRole("Clinician") || hasRole("Nurse") || hasRole("Reception") || hasRole("Billing");
+      return healthcareRole();
     }
 
     match /healthcareProfiles/{profileId} {
@@ -267,10 +308,10 @@ service cloud.firestore {
     }
 
     match /clinicalRecords/{clinicalRecordId} {
-      allow read: if sameInstitution(resource.data.institutionId)
+      allow read: if healthcareRecordScope(resource.data) && assignedPatient(resource.data) && specialtyScope(resource.data)
         && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse"));
-      allow create, update: if (hasRole("Clinician") || hasRole("Nurse") || ownerOrAdmin())
-        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
+      allow create, update: if healthcareRecordScope(request.resource.data) && assignedPatient(request.resource.data) && specialtyScope(request.resource.data)
+        && (hasRole("Clinician") || hasRole("Nurse") || ownerOrAdmin());
       allow delete: if false;
     }
 
@@ -290,12 +331,11 @@ service cloud.firestore {
     }
 
     match /laboratoryRequests/{requestId} {
-      allow read: if sameInstitution(resource.data.institutionId)
+      allow read: if healthcareRecordScope(resource.data) && assignedPatient(resource.data) && specialtyScope(resource.data)
         && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse") || hasRole("Laboratory") || hasRole("Billing"));
-      allow create: if signedIn()
-        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+      allow create: if healthcareRecordScope(request.resource.data) && assignedPatient(request.resource.data) && specialtyScope(request.resource.data)
         && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse") || hasRole("Reception"));
-      allow update: if sameInstitution(resource.data.institutionId)
+      allow update: if healthcareRecordScope(resource.data) && healthcareRecordScope(request.resource.data)
         && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse") || hasRole("Laboratory"));
       allow delete: if false;
     }
@@ -310,12 +350,11 @@ service cloud.firestore {
     }
 
     match /laboratoryResults/{resultId} {
-      allow read: if sameInstitution(resource.data.institutionId)
+      allow read: if healthcareRecordScope(resource.data) && assignedPatient(resource.data) && specialtyScope(resource.data)
         && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse") || hasRole("Laboratory"));
-      allow create: if signedIn()
-        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+      allow create: if healthcareRecordScope(request.resource.data) && assignedPatient(request.resource.data) && specialtyScope(request.resource.data)
         && (ownerOrAdmin() || hasRole("Laboratory"));
-      allow update: if sameInstitution(resource.data.institutionId)
+      allow update: if healthcareRecordScope(resource.data) && healthcareRecordScope(request.resource.data)
         && (ownerOrAdmin() || hasRole("Laboratory") || hasRole("Clinician"));
       allow delete: if false;
     }
@@ -339,10 +378,9 @@ service cloud.firestore {
     }
 
     match /pharmacyDispenses/{dispenseId} {
-      allow read: if sameInstitution(resource.data.institutionId)
+      allow read: if healthcareRecordScope(resource.data) && assignedPatient(resource.data) && specialtyScope(resource.data)
         && (ownerOrAdmin() || hasRole("Pharmacist") || hasRole("Clinician") || hasRole("Billing"));
-      allow create, update: if signedIn()
-        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+      allow create, update: if healthcareRecordScope(request.resource.data) && assignedPatient(request.resource.data) && specialtyScope(request.resource.data)
         && (ownerOrAdmin() || hasRole("Pharmacist"));
       allow delete: if false;
     }

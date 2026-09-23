@@ -1,4 +1,8 @@
-export type UserRole = "Owner" | "Admin" | "Manager" | "Employee";
+/** Canonical workspace roles. Vertical-specific roles remain user roles, not a second identity model. */
+export type UserRole =
+  | "Owner" | "Admin" | "Manager" | "Employee"
+  | "Clinician" | "Nurse" | "Reception" | "Billing"
+  | "Laboratory" | "Pharmacist";
 
 export interface Institution {
   institutionId: string;
@@ -35,6 +39,10 @@ export interface UserProfile {
   departmentId: string | null;
   lastActive: unknown;
   role: UserRole;
+  specialtyId?: string | null;
+  specialtyIds?: string[];
+  assignedPatientIds?: string[];
+  healthcarePermissions?: string[];
   status: "active" | "inactive";
   createdAt: unknown;
   securityStatus?: "standard" | "review" | "locked" | "compromised";
@@ -145,7 +153,7 @@ export interface Message {
   createdAt: unknown;
 }
 
-export type WorkforceRole = "Owner" | "Admin" | "Manager" | "Employee" | "Operator" | "Service Worker" | "Department Head";
+export type WorkforceRole = UserRole | "Operator" | "Service Worker" | "Department Head";
 
 export type DuplicateState = "New" | "Existing Match" | "Possible Duplicate" | "Conflict" | "Missing Identifier" | "Needs Review";
 

@@ -47,3 +47,32 @@ export async function registerSession(token: string, decoded: DecodedIdToken, ma
   }, { merge: true });
   return sessionId;
 }
+
+export async function verifyTerminalSession(
+  sessionId: string,
+  decoded: DecodedIdToken,
+  institutionId: string,
+) {
+  if (!adminDb) throw new Error("Firebase server is not configured.");
+  const sessionRef = adminDb.collection("terminalSessions").doc(sessionId);
+  const sessionSnapshot = await sessionRef.get();
+  const session = sessionSnapshot.data();
+  if (!sessionSnapshot.exists || !session || session.uid !== decoded.uid || session.institutionId !== institutionId || session.status !== "active") {
+    throw new Error("Terminal session is invalid.");
+  }
+  const expiresAt = session.expiresAt;
+  if (!(expiresAt instanceof Timestamp) || expiresAt.toMillis() <= Date.now()) {
+    await sessionRef.update({ status: "expired", updatedAt: FieldValue.serverTimestamp() });
+    throw new Error("Terminal session has expired.");
+  }
+  const terminalSnapshot = await adminDb.collection("terminalProfiles").doc(session.terminalId).get();
+  const terminal = terminalSnapshot.data();
+  if (!terminalSnapshot.exists || !terminal || terminal.institutionId !== institutionId || terminal.status !== "active") {
+    throw new Error("Terminal is unavailable.");
+  }
+  const autoLockAt = session.autoLockAt;
+  if (autoLockAt instanceof Timestamp && autoLockAt.toMillis() <= Date.now()) {
+    throw new Error("Terminal workspace is locked.");
+  }
+  return { sessionId, terminalId: session.terminalId, institutionId };
+}
