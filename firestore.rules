@@ -887,5 +887,31 @@ service cloud.firestore {
         && request.resource.data.eventId == resource.data.eventId;
       allow delete: if false;
     }
+
+    // Integrations are managed by workspace administrators. Provider credentials,
+    // webhook events and gateway side effects are server-only.
+    match /integrations/{integrationId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow create, update: if ownerOrAdmin()
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && request.resource.data.integrationId == integrationId;
+      allow delete: if false;
+    }
+    match /integrationCredentials/{credentialId} {
+      allow read, write: if false;
+    }
+    match /externalEvents/{eventId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow write: if false;
+    }
+    match /integrationExceptions/{exceptionId} {
+      allow read: if signedIn() && resource.data.institutionId != null
+        && sameInstitution(resource.data.institutionId) && ownerOrAdmin();
+      allow write: if false;
+    }
+    match /auditEvents/{eventId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow write: if false;
+    }
   }
 }
