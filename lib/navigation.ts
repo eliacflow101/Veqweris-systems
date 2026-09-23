@@ -20,6 +20,7 @@ import {
   School,
   HeartPulse,
   Hotel,
+  Activity,
 } from "lucide-react";
 import type { UserRole } from "@/lib/firebase/models";
 
@@ -65,6 +66,7 @@ export const navigationConfig: NavigationItem[] = [
   { label: "Resources", href: "/resources", icon: BriefcaseBusiness, section: "Governance", requiredModule: "resources", visibility: "future", futureAvailability: true },
   { label: "Compliance", href: "/compliance", icon: ShieldCheck, section: "Governance", requiredModule: "compliance", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
   { label: "Analytics", href: "/analytics", icon: BarChart3, section: "Platform", requiredModule: "analytics", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
+  { label: "Operational intelligence", href: "/operational-intelligence", icon: Activity, section: "Platform", requiredModule: "operational-intelligence", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
   { label: "Platform Administration", href: "/platform-admin", icon: Gauge, section: "Platform", requiredModule: "platform-admin", visibility: "future", futureAvailability: true },
 ];
 

@@ -71,6 +71,13 @@ service cloud.firestore {
           && record.specialtyId in userDoc(request.auth.uid).data.specialtyIds);
     }
 
+    match /operationalIntelligence/{recordId} {
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow create: if signedIn() && sameInstitution(request.resource.data.institutionId)
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /institutions/{institutionId} {
       allow create: if signedIn()
         && request.resource.data.institutionId == institutionId
