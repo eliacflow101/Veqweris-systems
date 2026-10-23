@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { verifyActiveSession } from "@/lib/firebase/server-auth";
+import { adminDb } from "@/lib/firebase/admin";
+import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 
 export async function POST() {
   if (!process.env.ZOOM_ACCOUNT_ID || !process.env.ZOOM_CLIENT_ID || !process.env.ZOOM_CLIENT_SECRET) {
@@ -9,7 +11,11 @@ export async function POST() {
   try {
     const token = (await cookies()).get("__session")?.value;
     if (!token) return NextResponse.json({ error: "You must be signed in." }, { status: 401 });
-    await verifyActiveSession(token);
+    const decoded = await verifyActiveSession(token);
+    if (!adminDb) return NextResponse.json({ error: "Firebase server is not configured." }, { status: 503 });
+    const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
+    if (!profile?.institutionId) return NextResponse.json({ error: "Institution profile required." }, { status: 403 });
+    await requireInstitutionModuleEntitlement(profile.institutionId, "messages");
     const credentials = Buffer.from(`${process.env.ZOOM_CLIENT_ID}:${process.env.ZOOM_CLIENT_SECRET}`).toString("base64");
     const accessResponse = await fetch(`https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(process.env.ZOOM_ACCOUNT_ID)}`, { method: "POST", headers: { Authorization: `Basic ${credentials}` } });
     if (!accessResponse.ok) return NextResponse.json({ error: "Zoom authentication failed." }, { status: 502 });

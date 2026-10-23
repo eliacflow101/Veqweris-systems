@@ -40,6 +40,8 @@ export type NavigationItem = {
   visibility?: "visible" | "future" | "disabled";
   futureAvailability?: boolean;
   disabled?: boolean;
+  /** Platform-only surfaces are never part of an institution's module entitlement. */
+  platformOnly?: boolean;
 };
 
 export type NavigationGroup = { label: string; items: NavigationItem[] };
@@ -71,7 +73,8 @@ export const navigationConfig: NavigationItem[] = [
   { label: "Institutional network", href: "/network", icon: Network, section: "Governance", requiredModule: "network", visibility: "visible", allowedRoles: ["Owner", "Admin", "Manager"], dataScope: "institution" },
   { label: "Analytics", href: "/analytics", icon: BarChart3, section: "Platform", requiredModule: "analytics", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
   { label: "Operational intelligence", href: "/operational-intelligence", icon: Activity, section: "Platform", requiredModule: "operational-intelligence", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin", "Manager", "Employee"], dataScope: "institution" },
-  { label: "Platform Administration", href: "/platform-admin", icon: Gauge, section: "Platform", requiredModule: "platform-admin", visibility: "future", futureAvailability: true },
+  { label: "Subscription", href: "/subscription", icon: Wallet, section: "Control", requiredModule: "subscription", visibility: "visible", futureAvailability: false, allowedRoles: ["Owner", "Admin"], dataScope: "institution" },
+  { label: "Platform Administration", href: "/platform-admin", icon: Gauge, section: "Platform", requiredModule: "platform-admin", visibility: "visible", futureAvailability: false, platformOnly: true },
 ];
 
 export const navigationSections = ["Workspace", "Information", "Control", "Operations", "Governance", "Platform"] as const;
@@ -96,6 +99,22 @@ export function isNavItemVisible(item: NavigationItem, role?: string) {
   if (item.visibility === "future") return false;
   if (item.allowedRoles && role && !item.allowedRoles.includes(role as NavigationRole)) return false;
   return true;
+}
+
+/**
+ * Platform-only surfaces are filtered by platform operator status, never by an
+ * institution role. Institution members (Owner/Admin/Manager/Employee and all
+ * vertical roles) can never see the platform console entry.
+ */
+export function isPlatformOnlyItem(item: NavigationItem) {
+  return Boolean(item.platformOnly);
+}
+
+export function filterNavigationForPlatform<T extends NavigationItem>(
+  items: T[],
+  options: { isPlatformOperator: boolean },
+): T[] {
+  return items.filter((item) => !isPlatformOnlyItem(item) || options.isPlatformOperator);
 }
 
 export const globalSearchPlaceholder = "Search workspace";

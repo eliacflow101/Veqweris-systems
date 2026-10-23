@@ -78,8 +78,15 @@ export function verifyFlutterwaveTransaction(transactionId: string) {
 }
 
 export function refundFlutterwaveTransaction(transactionId: string, amount?: number) {
-  return flutterwaveRequest<{ id?: string; status?: string }>(`/transactions/${encodeURIComponent(transactionId)}/refund`, {
+  return flutterwaveRequest<{ id?: string | number; status?: string }>(`/transactions/${encodeURIComponent(transactionId)}/refund`, {
     method: "POST",
     body: JSON.stringify(amount === undefined ? {} : { amount }),
   });
+}
+
+export function listFlutterwaveTransactionRefunds(transactionId: string) {
+  return flutterwaveRequest<Array<{ id?: string | number; status?: string; amount?: number }>>(
+    `/transactions/${encodeURIComponent(transactionId)}/refunds`,
+    { method: "GET" },
+  );
 }

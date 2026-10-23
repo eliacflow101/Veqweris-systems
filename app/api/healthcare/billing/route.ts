@@ -2,6 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 
 export async function POST(request: Request) {
   try {
@@ -10,9 +11,10 @@ export async function POST(request: Request) {
     if (!token) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     const decoded = await verifyActiveSession(token);
     const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
-    if (!profile?.institutionId || !["Owner", "Admin", "Manager", "Billing", "Clinician", "Reception"].includes(profile.role)) {
+    if (!profile?.institutionId || profile.status !== "active" || !["Owner", "Admin", "Manager", "Billing", "Clinician", "Reception"].includes(profile.role)) {
       return NextResponse.json({ error: "You are not authorized to create healthcare bills." }, { status: 403 });
     }
+    await requireInstitutionModuleEntitlement(profile.institutionId, "healthcare");
     const body = await request.json() as {
       patientId?: string;
       encounterId?: string;
@@ -48,6 +50,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ billId: billRef.id, status: "OPEN" }, { status: 201 });
   } catch (reason) {
     console.error("Unable to create healthcare bill.", reason);
-    return NextResponse.json({ error: "Unable to create healthcare bill." }, { status: 400 });
+    const code = reason instanceof Error ? reason.message : "";
+    const status = code === "SERVICE_UNAVAILABLE" ? 503 : code === "UNAUTHENTICATED" ? 401 : code === "FORBIDDEN" ? 403 : 400;
+    return NextResponse.json({ error: status === 403 ? "Healthcare billing access is unavailable." : "Unable to create healthcare bill." }, { status });
   }
 }

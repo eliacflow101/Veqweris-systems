@@ -241,11 +241,13 @@ export async function savePlannerEvent(input: Omit<PlannerEvent, "eventId" | "in
 }
 
 export async function saveDepartment(input: Pick<Department, "name" | "departmentCode" | "description" | "headUserId">, institutionId: string, departmentId?: string) {
-  if (!db) throw new Error("Firebase is not configured.");
-  const ref = departmentId ? doc(db, "departments", departmentId) : doc(collection(db, "departments"));
-  const payload = { ...input, departmentId: ref.id, institutionId, updatedAt: serverTimestamp() };
-  if (departmentId) await updateDoc(ref, payload);
-  else await (await import("@firebase/firestore")).setDoc(ref, { ...payload, status: "active" as const, createdAt: serverTimestamp() });
+  const response = await fetch("/api/departments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, institutionId, ...(departmentId ? { departmentId } : {}) }),
+  });
+  const result = await response.json() as { error?: string };
+  if (!response.ok) throw new Error(result.error || "Unable to save department.");
 }
 
 export async function deactivateDepartment(id: string) {

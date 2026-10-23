@@ -6,7 +6,7 @@ import { requirePaymentOperator } from "@/lib/payments/server";
 
 export async function POST(request: Request) {
   try {
-    const { uid, profile, db } = await requirePaymentOperator();
+    const { uid, profile, db } = await requirePaymentOperator(request);
     const body = await request.json() as {
       billId?: string;
       idempotencyKey?: string;
@@ -95,7 +95,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "A payment with this idempotency key is already being processed." }, { status: 409 });
     }
     const message = reason instanceof Error ? reason.message : "Unable to initialize payment.";
-    const status = message.includes("signed in") ? 401 : message.includes("required") ? 400 : 500;
+    const status = message.includes("signed in") || message.includes("token") || message.includes("Session") ? 401
+      : message === "Firebase server is not configured." ? 503
+        : message.includes("not available") || message.includes("billing is not enabled") ? 403
+          : message.includes("required") ? 400 : 500;
     console.error("Unable to initialize Flutterwave payment.", reason);
     return NextResponse.json({ error: message }, { status });
   }

@@ -2,6 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { requireInstitutionFeatureEntitlement, requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 import { canReadMetric, getMetric, metricRegistry, type MetricSensitivity, type ReportFilters } from "@/lib/analytics";
 
 const sensitivityRank: Record<MetricSensitivity, number> = { public: 0, internal: 1, confidential: 2, restricted: 3 };
@@ -20,6 +21,8 @@ export async function POST(request: Request) {
     const decoded = await verifyActiveSession(token);
     const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
     if (!profile?.institutionId) return NextResponse.json({ error: "Institution profile required." }, { status: 403 });
+    await requireInstitutionModuleEntitlement(profile.institutionId, "analytics");
+    await requireInstitutionFeatureEntitlement(profile.institutionId, "data-export");
     const body = await request.json() as { filters?: ReportFilters; format?: "json" | "csv"; sensitivity?: MetricSensitivity };
     const filters = body.filters ?? {};
     const metrics = metricRegistry.filter((metric) =>

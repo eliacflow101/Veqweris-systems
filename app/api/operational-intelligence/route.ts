@@ -2,6 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { institutionHasModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 import { buildOperationalCues, calculateOperationalLoad, createOperationalEvent, createOperationalFlow, detectResourceConflicts, evaluateReadinessMatrix, simulateScenario } from "@/lib/operational-intelligence";
 
 async function authenticate(request: Request) {
@@ -11,6 +12,7 @@ async function authenticate(request: Request) {
   const decoded = await verifyActiveSession(token);
   const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
   if (!profile?.institutionId) throw new Error("FORBIDDEN");
+  if (!await institutionHasModuleEntitlement(profile.institutionId, "operational-intelligence")) throw new Error("FORBIDDEN");
   return { decoded, profile };
 }
 function failure(error: unknown) {

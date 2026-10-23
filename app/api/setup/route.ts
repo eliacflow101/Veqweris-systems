@@ -2,6 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { institutionHasModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 import { buildSetupRequirements, calculateSetupProgress, defaultSetupConfig, evaluateSetupRequirements, recommendDepartments, transitionSetupRequirement, type DepartmentRecommendation, type SetupModule, type SetupRequirement, type SetupState } from "@/lib/setup";
 
 async function authenticate(request: Request) {
@@ -12,6 +13,7 @@ async function authenticate(request: Request) {
   const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
   if (!profile?.institutionId || profile.status === "inactive") throw new Error("FORBIDDEN");
   if (!["Owner", "Admin", "Manager"].includes(profile.role)) throw new Error("FORBIDDEN");
+  if (!await institutionHasModuleEntitlement(profile.institutionId, "setup")) throw new Error("FORBIDDEN");
   return { decoded, profile };
 }
 
@@ -27,27 +29,50 @@ export async function GET(request: Request) {
     const institutionId = profile.institutionId as string;
     const configSnapshot = await adminDb!.collection("setupConfigs").doc(institutionId).get();
     const config = configSnapshot.exists ? configSnapshot.data() as ReturnType<typeof defaultSetupConfig> : defaultSetupConfig(institutionId);
-    const requirementsSnapshot = await adminDb!.collection("setupRequirements").where("institutionId", "==", institutionId).get();
-    const requirements = buildSetupRequirements(institutionId, config, requirementsSnapshot.docs.map((doc) => doc.data() as SetupRequirement));
+    const defaultRequirements = buildSetupRequirements(institutionId, config);
+    const requirementSnapshots = await adminDb!.getAll(...defaultRequirements.map((item) => adminDb!.collection("setupRequirements").doc(item.requirementId)));
+    const existingRequirements = requirementSnapshots
+      .filter((snapshot) => snapshot.exists && snapshot.get("institutionId") === institutionId)
+      .map((snapshot) => snapshot.data() as SetupRequirement);
+    const requirements = buildSetupRequirements(institutionId, config, existingRequirements);
     const collectionNames = ["academicYears", "academicLevels", "schoolClasses", "schoolSubjects", "hotelRooms"];
-    const [institutionSnapshot, usersSnapshot, departmentsSnapshot, ...moduleSnapshots] = await Promise.all([
+    const activeUsersQuery = adminDb!.collection("users").where("institutionId", "==", institutionId).where("status", "==", "active");
+    const [institutionSnapshot, activeUsersSnapshot, accountableUsersSnapshot, ownerSnapshot, adminSnapshot, clinicianSnapshot, nurseSnapshot, receptionSnapshot, departmentCountSnapshot, ...moduleSnapshots] = await Promise.all([
       adminDb!.collection("institutions").doc(institutionId).get(),
-      adminDb!.collection("users").where("institutionId", "==", institutionId).get(),
-      adminDb!.collection("departments").where("institutionId", "==", institutionId).get(),
+      activeUsersQuery.count().get(),
+      activeUsersQuery.where("role", "in", ["Owner", "Admin", "Manager"]).count().get(),
+      activeUsersQuery.where("role", "==", "Owner").count().get(),
+      activeUsersQuery.where("role", "==", "Admin").count().get(),
+      activeUsersQuery.where("role", "==", "Clinician").count().get(),
+      activeUsersQuery.where("role", "==", "Nurse").count().get(),
+      activeUsersQuery.where("role", "==", "Reception").count().get(),
+      adminDb!.collection("departments").where("institutionId", "==", institutionId).count().get(),
       ...collectionNames.map((name) => adminDb!.collection(name).where("institutionId", "==", institutionId).limit(1).get()),
     ]);
     const institution = institutionSnapshot.data() ?? {};
+    const activeUserRoles = [
+      ...Array.from({ length: Math.min(ownerSnapshot.data().count, 1) }, () => ({ role: "Owner", status: "active" })),
+      ...Array.from({ length: Math.min(adminSnapshot.data().count, 1) }, () => ({ role: "Admin", status: "active" })),
+      ...Array.from({ length: Math.min(Math.max(0, accountableUsersSnapshot.data().count - ownerSnapshot.data().count - adminSnapshot.data().count), 2) }, () => ({ role: "Manager", status: "active" })),
+      ...Array.from({ length: Math.min(clinicianSnapshot.data().count, 1) }, () => ({ role: "Clinician", status: "active" })),
+      ...Array.from({ length: Math.min(nurseSnapshot.data().count, 1) }, () => ({ role: "Nurse", status: "active" })),
+      ...Array.from({ length: Math.min(receptionSnapshot.data().count, 1) }, () => ({ role: "Reception", status: "active" })),
+      ...Array.from({ length: Math.min(Math.max(0, activeUsersSnapshot.data().count - ownerSnapshot.data().count - adminSnapshot.data().count - clinicianSnapshot.data().count - nurseSnapshot.data().count - receptionSnapshot.data().count), 2) }, () => ({ role: "Employee", status: "active" })),
+    ];
     const evidence = {
       institutionExists: institutionSnapshot.exists,
       institutionProfileComplete: Boolean(institution.name && institution.country),
-      activeUsers: usersSnapshot.docs.map((doc) => ({ role: doc.data().role, status: doc.data().status })),
-      departmentCount: departmentsSnapshot.size,
+      activeUsers: activeUserRoles,
+      departmentCount: departmentCountSnapshot.data().count,
       collections: Object.fromEntries(collectionNames.map((name, index) => [name, moduleSnapshots[index].size])),
     };
     const verifiedRequirements = evaluateSetupRequirements(requirements, config, evidence);
-    const savedRecommendations = await adminDb!.collection("setupRecommendations").where("institutionId", "==", institutionId).get();
-    const saved = new Map(savedRecommendations.docs.map((doc) => [doc.id, doc.data() as DepartmentRecommendation]));
-    const recommendations = recommendDepartments(config.institutionType).map((item) => ({ ...item, ...(saved.get(item.recommendationId) ?? {}) }));
+    const recommendationDefaults = recommendDepartments(config.institutionType);
+    const savedRecommendations = await adminDb!.getAll(...recommendationDefaults.map((item) => adminDb!.collection("setupRecommendations").doc(item.recommendationId)));
+    const saved = new Map(savedRecommendations
+      .filter((snapshot) => snapshot.exists && snapshot.get("institutionId") === institutionId)
+      .map((snapshot) => [snapshot.id, snapshot.data() as DepartmentRecommendation]));
+    const recommendations = recommendationDefaults.map((item) => ({ ...item, ...(saved.get(item.recommendationId) ?? {}) }));
     return NextResponse.json({ config, requirements: verifiedRequirements, recommendations, progress: calculateSetupProgress(verifiedRequirements) });
   } catch (error) { return failure(error); }
 }

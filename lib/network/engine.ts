@@ -24,7 +24,7 @@ export function publicNetworkProfile(profile: NetworkProfile): NetworkProfile {
     selectedServices: [...profile.selectedServices],
     participation: profile.participation,
     contactEnabled: profile.contactEnabled,
-    trustState: profile.trustState,
+    trustState: profile.platformTrustState ?? "Registered",
     updatedAt: profile.updatedAt,
   };
   if (Object.keys(result).some((key) => forbiddenProfileKeys.includes(key))) throw new Error("Network profiles cannot contain operational or personal data.");
@@ -43,6 +43,29 @@ export function transitionAssistanceRequest(request: AssistanceRequest, next: As
   if (request.state === next) return { ...request, updatedAt: now };
   if (!requestTransitions[request.state].includes(next)) throw new Error(`Invalid assistance request transition: ${request.state} -> ${next}`);
   return { ...request, state: next, updatedAt: now, ...(next === "Completed" ? { completedAt: now } : {}) };
+}
+
+export function canInstitutionTransitionAssistance(
+  request: AssistanceRequest,
+  next: AssistanceRequestState,
+  actorInstitutionId: string,
+): boolean {
+  const requester = actorInstitutionId === request.requesterInstitutionId;
+  const requested = actorInstitutionId === request.requestedInstitutionId;
+  if (!requester && !requested) return false;
+  if (next === "Cancelled") return requester && !["Completed", "Cancelled", "Expired", "Declined"].includes(request.state);
+  if (next === "Expired") return false;
+  if (request.state === "Draft") return requester && next === "Submitted";
+  if (request.state === "Submitted") return requested && next === "Under Review";
+  if (request.state === "Under Review") return requested && ["Accepted", "Declined", "Clarification Required"].includes(next);
+  if (request.state === "Accepted") return requested && next === "In Progress";
+  if (request.state === "Clarification Required") return requester && next === "Submitted";
+  if (request.state === "In Progress") return requested && next === "Completed";
+  return false;
+}
+
+export function canViewAssistanceRequest(request: AssistanceRequest, institutionId: string): boolean {
+  return institutionId === request.requesterInstitutionId || institutionId === request.requestedInstitutionId;
 }
 
 export function createCollaborationContract(input: {

@@ -29,6 +29,7 @@ export async function createAccount(
   const batch = writeBatch(db);
   batch.set(institutionRef, {
     institutionId: institutionRef.id,
+    createdBy: credential.user.uid,
     name: institutionName,
     country,
     status: "active",

@@ -7,18 +7,21 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, writeBatch } from "firebase/firestore";
 
 const projectId = "veqweris-rules-test";
 const institutionA = "institution-a";
 const institutionB = "institution-b";
+const suspensionTestInstitution = "institution-suspension-test";
 const ownerUid = "owner-a";
+const ownerBUid = "owner-b";
 const adminUid = "admin-a";
 const managerUid = "manager-a";
 const employeeUid = "employee-a";
 const otherUid = "user-b";
 const clinicianUid = "clinician-a";
 const nurseUid = "nurse-a";
+const suspensionTestUid = "employee-suspension-test";
 
 let testEnv: RulesTestEnvironment;
 
@@ -101,7 +104,7 @@ async function seedData() {
       name: "Institution A",
       country: "US",
       status: "active",
-      planTier: "trial",
+      planTier: "enterprise",
       createdAt: new Date(),
     });
     await setDoc(doc(db, "institutions", institutionB), {
@@ -112,14 +115,22 @@ async function seedData() {
       planTier: "trial",
       createdAt: new Date(),
     });
+    await setDoc(doc(db, "institutions", suspensionTestInstitution), {
+      institutionId: suspensionTestInstitution,
+      name: "Suspension Test",
+      status: "active",
+      planTier: "enterprise",
+    });
     for (const [uid, role, institutionId] of [
       [ownerUid, "Owner", institutionA],
+      [ownerBUid, "Owner", institutionB],
       [adminUid, "Admin", institutionA],
       [managerUid, "Manager", institutionA],
       [employeeUid, "Employee", institutionA],
       [otherUid, "Employee", institutionB],
       [clinicianUid, "Clinician", institutionA],
       [nurseUid, "Nurse", institutionA],
+      [suspensionTestUid, "Employee", suspensionTestInstitution],
     ] as const) {
       await setDoc(doc(db, "users", uid), userData(uid, role, institutionId));
     }
@@ -128,6 +139,7 @@ async function seedData() {
     await setDoc(doc(db, "departments", "department-b"), departmentData("department-b", institutionB, otherUid));
     await setDoc(doc(db, "tasks", "task-a"), taskData("task-a", institutionA, "department-a", employeeUid));
     await setDoc(doc(db, "tasks", "task-b"), taskData("task-b", institutionB, "department-b", otherUid));
+    await setDoc(doc(db, "tasks", "task-suspension-test"), taskData("task-suspension-test", suspensionTestInstitution, "department-a", suspensionTestUid));
     await setDoc(doc(db, "plannerEvents", "event-a"), plannerEventData("event-a", institutionA, "department-a", managerUid, [employeeUid]));
     await setDoc(doc(db, "plannerEvents", "event-wide"), plannerEventData("event-wide", institutionA, null, ownerUid));
     await setDoc(doc(db, "plannerEvents", "event-other-department"), plannerEventData("event-other-department", institutionA, "department-c", ownerUid));
@@ -174,9 +186,96 @@ test("authenticated Owner can read and write documents in their own institution"
   await assertSucceeds(setDoc(doc(db, "users", ownerUid), { fullName: "Updated Owner" }, { merge: true }));
 });
 
+test("tenant owners cannot modify platform-owned institution state or access platform collections", async () => {
+  const db = testEnv.authenticatedContext(ownerUid).firestore();
+  await assertFails(setDoc(doc(db, "institutions", institutionA), { planTier: "basic" }, { merge: true }));
+  await assertFails(setDoc(doc(db, "institutions", institutionA), { relationship: "Internal" }, { merge: true }));
+  await assertFails(setDoc(doc(db, "institutions", institutionA), { entitlement: { modules: ["school"] } }, { merge: true }));
+  await assertFails(getDoc(doc(db, "platformOperators", ownerUid)));
+  await assertFails(setDoc(doc(db, "platformSupportGrants", "forged"), { institutionId: institutionA }));
+  await assertFails(setDoc(doc(db, "platformAuditEvents", "forged"), { institutionId: institutionA }));
+  await assertFails(setDoc(doc(db, "platformBootstrap", "initial-owner"), { uid: ownerUid }));
+  const attackerDb = testEnv.authenticatedContext("attacker").firestore();
+  await assertFails(setDoc(doc(attackerDb, "users", "attacker"), userData("attacker", "Owner", institutionA)));
+});
+
+test("suspended institutions lose Firestore operational access while active institutions retain it", async () => {
+  const db = testEnv.authenticatedContext(suspensionTestUid).firestore();
+  await assertSucceeds(getDoc(doc(db, "tasks", "task-suspension-test")));
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), "institutions", suspensionTestInstitution), { status: "suspended" }, { merge: true });
+  });
+  await assertFails(getDoc(doc(db, "tasks", "task-suspension-test")));
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), "institutions", suspensionTestInstitution), { status: "active" }, { merge: true });
+  });
+  await assertSucceeds(getDoc(doc(db, "tasks", "task-suspension-test")));
+});
+
+test("tenant institution admins cannot self-assign a network trust state", async () => {
+  const db = testEnv.authenticatedContext(ownerUid).firestore();
+  const profile = {
+    institutionId: institutionA,
+    institutionName: "Institution A",
+    broadLocation: "North",
+    selectedServices: ["coordination"],
+    participation: "open",
+    contactEnabled: true,
+    trustState: "Registered",
+    updatedAt: new Date().toISOString(),
+  };
+  await assertSucceeds(setDoc(doc(db, "networkProfiles", institutionA), profile));
+  await assertFails(setDoc(doc(db, "networkProfiles", institutionA), { ...profile, trustState: "Enterprise Partner" }));
+  await assertFails(setDoc(doc(db, "networkProfiles", institutionA), { ...profile, platformTrustState: "Verified" }));
+  const basicDb = testEnv.authenticatedContext(ownerBUid).firestore();
+  await assertFails(setDoc(doc(basicDb, "networkProfiles", institutionB), { ...profile, institutionId: institutionB }));
+});
+
 test("authenticated user can always read their own user document", async () => {
   const db = testEnv.authenticatedContext(employeeUid).firestore();
   await assertSucceeds(getDoc(doc(db, "users", employeeUid)));
+});
+
+test("users can update personal profile fields but cannot change authorization fields", async () => {
+  const db = testEnv.authenticatedContext(clinicianUid).firestore();
+  const profileRef = doc(db, "users", clinicianUid);
+  await assertSucceeds(setDoc(profileRef, {
+    fullName: "Updated Clinician",
+    email: "updated-clinician@example.com",
+    phone: "555-0100",
+    photoUrl: "https://example.com/profile.png",
+    preferences: { theme: "dark" },
+  }, { merge: true }));
+
+  await assertFails(setDoc(profileRef, { status: "inactive" }, { merge: true }));
+  await assertFails(setDoc(profileRef, { role: "Owner" }, { merge: true }));
+  await assertFails(setDoc(profileRef, { departmentId: "department-c" }, { merge: true }));
+  await assertFails(setDoc(profileRef, { assignedPatientIds: ["patient-b"] }, { merge: true }));
+  await assertFails(setDoc(profileRef, { specialtyIds: ["oncology"] }, { merge: true }));
+  await assertFails(setDoc(profileRef, { healthcarePermissions: ["highly_sensitive"] }, { merge: true }));
+});
+
+test("initial signup is blocked when the managed Basic plan cannot include one Owner", async () => {
+  async function createOwnerSignup(uid: string, institutionId: string) {
+    const db = testEnv.authenticatedContext(uid).firestore();
+    const batch = writeBatch(db);
+    batch.set(doc(db, "institutions", institutionId), {
+      institutionId, createdBy: uid, name: "Signup institution", country: "Test",
+      status: "active", planTier: "trial", createdAt: new Date(),
+    });
+    batch.set(doc(db, "users", uid), {
+      uid, institutionId, role: "Owner", status: "active",
+    });
+    return batch.commit();
+  }
+
+  await assertSucceeds(createOwnerSignup("signup-default-owner", "signup-default-institution"));
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), "platformPlanCatalog", "basic"), {
+      planId: "basic", status: "active", limits: { maxUsers: 0 },
+    });
+  });
+  await assertFails(createOwnerSignup("signup-no-user-capacity", "signup-no-capacity-institution"));
 });
 
 test("Manager and Employee cannot modify another user in their institution", async () => {
@@ -230,11 +329,20 @@ test("Employee cannot create a department", async () => {
   await assertFails(setDoc(doc(db, "departments", "employee-department"), departmentData("employee-department", institutionA)));
 });
 
-test("Owner and Admin can create a department", async () => {
+test("department creation is restricted to the server-side capacity boundary", async () => {
   const ownerDb = testEnv.authenticatedContext(ownerUid).firestore();
   const adminDb = testEnv.authenticatedContext(adminUid).firestore();
-  await assertSucceeds(setDoc(doc(ownerDb, "departments", "owner-department"), departmentData("owner-department", institutionA)));
-  await assertSucceeds(setDoc(doc(adminDb, "departments", "admin-department"), departmentData("admin-department", institutionA)));
+  await assertFails(setDoc(doc(ownerDb, "departments", "owner-department"), departmentData("owner-department", institutionA)));
+  await assertFails(setDoc(doc(adminDb, "departments", "admin-department"), departmentData("admin-department", institutionA)));
+});
+
+test("integration configuration writes are restricted to the server-side capacity boundary", async () => {
+  const ownerDb = testEnv.authenticatedContext(ownerUid).firestore();
+  const adminDb = testEnv.authenticatedContext(adminUid).firestore();
+  const integration = { integrationId: "integration-a", institutionId: institutionA, provider: "test" };
+  await assertFails(setDoc(doc(ownerDb, "integrations", "integration-a"), integration));
+  await assertFails(setDoc(doc(adminDb, "integrations", "integration-a"), integration));
+  await assertFails(setDoc(doc(ownerDb, "integrationCredentials", "credential-a"), integration));
 });
 
 test("Manager can update their own department but not another department", async () => {

@@ -2,6 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 
 function serialize(value: unknown): unknown {
   if (value && typeof value === "object" && "toDate" in value && typeof (value as { toDate?: unknown }).toDate === "function") {
@@ -18,6 +19,7 @@ export async function GET(request: Request) {
     const decoded = await verifyActiveSession(token);
     const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
     if (!profile?.institutionId) return NextResponse.json({ error: "Institution profile required." }, { status: 403 });
+    await requireInstitutionModuleEntitlement(profile.institutionId, "inventory");
     const snapshot = await adminDb.collection("inventoryItems").where("institutionId", "==", profile.institutionId).get();
     const items = snapshot.docs.map((doc) => {
       const data = doc.data();
@@ -38,6 +40,8 @@ export async function POST(request: Request) {
     const decoded = await verifyActiveSession(token);
     const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
     if (!profile || !["Owner", "Admin", "Manager"].includes(profile.role)) return NextResponse.json({ error: "Inventory setup is restricted." }, { status: 403 });
+    if (!profile.institutionId) return NextResponse.json({ error: "Institution profile required." }, { status: 403 });
+    await requireInstitutionModuleEntitlement(profile.institutionId, "inventory");
     const body = await request.json() as { itemId?: string; name?: string; sku?: string; category?: string; unit?: string; minimumLevel?: number; safetyLevel?: number; locationId?: string };
     if (!body.name?.trim() || !body.sku?.trim() || !body.unit?.trim() || !body.locationId?.trim()) {
       return NextResponse.json({ error: "name, sku, unit, and locationId are required." }, { status: 400 });

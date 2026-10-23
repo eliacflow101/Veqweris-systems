@@ -2,8 +2,9 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { institutionHasModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 import { createAuditEvent } from "@/lib/governance";
-import { approveCollaborationContract, contractAllowsAccess, createAssistanceRequest, createCollaborationContract, publicNetworkProfile, revokeCollaborationContract, transitionAssistanceRequest, type AssistanceRequest, type CollaborationContract, type NetworkProfile } from "@/lib/network";
+import { approveCollaborationContract, canInstitutionTransitionAssistance, canViewAssistanceRequest, contractAllowsAccess, createAssistanceRequest, createCollaborationContract, publicNetworkProfile, revokeCollaborationContract, transitionAssistanceRequest, type AssistanceRequest, type CollaborationContract, type NetworkProfile } from "@/lib/network";
 
 async function authenticate(request: Request) {
   if (!adminDb) throw new Error("SERVICE_UNAVAILABLE");
@@ -13,6 +14,7 @@ async function authenticate(request: Request) {
   const snapshot = await adminDb.collection("users").doc(decoded.uid).get();
   const profile = snapshot.data();
   if (!profile?.institutionId || profile.status === "inactive") throw new Error("FORBIDDEN");
+  if (!await institutionHasModuleEntitlement(profile.institutionId, "network")) throw new Error("FORBIDDEN");
   return { decoded, profile };
 }
 
@@ -45,7 +47,11 @@ export async function GET(request: Request) {
     };
     if (params.get("requestId")) {
       const requestDoc = await adminDb!.collection("assistanceRequests").doc(params.get("requestId")!).get();
-      response.assistanceRequest = requestDoc.exists ? requestDoc.data() : null;
+      const assistance = requestDoc.data() as AssistanceRequest | undefined;
+      if (!requestDoc.exists || !assistance || !canViewAssistanceRequest(assistance, profile.institutionId)) {
+        return NextResponse.json({ error: "Assistance request not found." }, { status: 404 });
+      }
+      response.assistanceRequest = assistance;
     }
     return NextResponse.json(response);
   } catch (error) { return failure(error); }
@@ -58,7 +64,14 @@ export async function POST(request: Request) {
     if (!adminRoles.includes(profile.role)) return NextResponse.json({ error: "Network governance requires an owner or administrator." }, { status: 403 });
     if (body.action === "upsert_profile" && body.networkProfile) {
       if (body.networkProfile.institutionId !== profile.institutionId) throw new Error("Institution scope cannot be changed.");
-      const safe = publicNetworkProfile(body.networkProfile);
+      const existing = await adminDb!.collection("networkProfiles").doc(profile.institutionId).get();
+      const authoritativeTrust = existing.exists
+        ? (existing.get("platformTrustState") as NetworkProfile["trustState"] | undefined) ?? "Registered"
+        : "Registered";
+      const safe = {
+        ...publicNetworkProfile({ ...body.networkProfile, trustState: authoritativeTrust }),
+        platformTrustState: authoritativeTrust,
+      };
       await adminDb!.collection("networkProfiles").doc(profile.institutionId).set(safe, { merge: true });
       await audit(profile.institutionId, decoded.uid, "network_profile.updated", "networkProfile", profile.institutionId, {});
       return NextResponse.json({ profile: safe });
@@ -74,6 +87,9 @@ export async function POST(request: Request) {
       const ref = adminDb!.collection("assistanceRequests").doc(body.requestId);
       const snapshot = await ref.get(); const current = snapshot.data() as AssistanceRequest;
       if (!snapshot.exists || ![current.requesterInstitutionId, current.requestedInstitutionId].includes(profile.institutionId)) throw new Error("Assistance request is outside institution scope.");
+      if (!canInstitutionTransitionAssistance(current, body.nextState, profile.institutionId)) {
+        return NextResponse.json({ error: "This institution cannot perform the requested assistance transition." }, { status: 403 });
+      }
       const assistance = transitionAssistanceRequest(current, body.nextState);
       await ref.set(assistance);
       await audit(profile.institutionId, decoded.uid, "assistance.transitioned", "assistanceRequest", assistance.requestId, { state: assistance.state });

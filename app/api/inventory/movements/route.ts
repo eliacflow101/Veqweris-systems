@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
 import { createInventoryMovement } from "@/lib/inventory-engine";
+import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 
 const allowedRoles = ["Owner", "Admin", "Manager", "Operator", "Service Worker"];
 
@@ -21,6 +22,7 @@ export async function GET(request: Request) {
     const decoded = await verifyActiveSession(token);
     const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
     if (!profile?.institutionId) return NextResponse.json({ error: "Institution profile required." }, { status: 403 });
+    await requireInstitutionModuleEntitlement(profile.institutionId, "inventory");
     const itemId = new URL(request.url).searchParams.get("itemId");
     let query = adminDb.collection("inventoryMovements").where("institutionId", "==", profile.institutionId);
     if (itemId) query = query.where("itemId", "==", itemId) as typeof query;
@@ -42,6 +44,8 @@ export async function POST(request: Request) {
     const decoded = await verifyActiveSession(token);
     const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
     if (!profile || !allowedRoles.includes(profile.role)) return NextResponse.json({ error: "You are not authorized to manage inventory." }, { status: 403 });
+    if (!profile.institutionId) return NextResponse.json({ error: "Institution profile required." }, { status: 403 });
+    await requireInstitutionModuleEntitlement(profile.institutionId, "inventory");
 
     const body = await request.json() as {
       movementId?: string; itemId?: string; type?: string; quantity?: number; adjustmentDirection?: "increase" | "decrease"; destinationLocationId?: string; reason?: string; sourceEvent?: string; approvalRequired?: boolean;

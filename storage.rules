@@ -13,28 +13,34 @@ service firebase.storage {
       return signedIn() && userDoc().data.institutionId == institutionId;
     }
 
+    function institutionHasModule(institutionId, moduleId) {
+      let institution = firestore.get(/databases/(default)/documents/institutions/$(institutionId)).data;
+      return institution.status == "active"
+        && (
+          ("entitlement" in institution
+            && "modules" in institution.entitlement
+            && moduleId in institution.entitlement.modules)
+          || (!("entitlement" in institution)
+            && (
+              institution.planTier in ["internal", "developer", "partner", "enterprise"]
+              || (institution.planTier in ["trial", "basic"]
+                && moduleId in ["dashboard", "departments", "employees", "tasks", "planner", "messages", "notifications", "documents", "reports", "approvals", "settings", "inventory", "setup"])
+              || (institution.planTier == "professional"
+                && moduleId in ["dashboard", "departments", "employees", "tasks", "planner", "messages", "notifications", "documents", "reports", "approvals", "settings", "inventory", "setup", "compliance", "analytics", "operational-intelligence", "network", "school", "healthcare", "hospitality"])
+            ))
+        );
+    }
+
     function ownerOrAdmin() {
       return signedIn() && userDoc().data.role in ["Owner", "Admin"];
     }
 
     match /quarantine/{institutionId}/{fileName} {
-      allow read: if sameInstitution(institutionId)
-        && (ownerOrAdmin() || userDoc().data.status == "active");
-      allow write: if sameInstitution(institutionId)
-        && userDoc().data.status == "active"
-        && request.resource.size > 0
-        && request.resource.size <= 25 * 1024 * 1024
-        && request.resource.contentType != null
-        && request.resource.contentType.matches("^(text/csv|application/vnd.ms-excel|application/vnd.openxmlformats-officedocument.spreadsheetml.sheet|application/pdf|image/.*)$");
-      allow delete: if sameInstitution(institutionId) && ownerOrAdmin();
+      allow read, write: if false;
     }
 
     match /documents/{institutionId}/{fileName} {
-      allow read: if sameInstitution(institutionId) && userDoc().data.status == "active";
-      allow write: if sameInstitution(institutionId) && ownerOrAdmin()
-        && request.resource.size > 0
-        && request.resource.size <= 25 * 1024 * 1024;
-      allow delete: if sameInstitution(institutionId) && ownerOrAdmin();
+      allow read, write: if false;
     }
   }
 }

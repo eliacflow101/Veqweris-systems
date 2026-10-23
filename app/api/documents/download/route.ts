@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { adminDb, adminStorage, adminAuth } from "@/lib/firebase/admin";
 import { cookies } from "next/headers";
 import { verifyActiveSession } from "@/lib/firebase/server-auth";
+import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 
 async function getSessionToken(req: Request) {
   const authHeader = req.headers.get("authorization") || "";
@@ -28,6 +29,8 @@ export async function GET(req: Request) {
     const userSnap = await adminDb.collection("users").doc(decoded.uid).get();
     if (!userSnap.exists) return NextResponse.json({ error: "User not found" }, { status: 403 });
     const user = userSnap.data()!;
+    if (!user.institutionId) return NextResponse.json({ error: "Institution profile required" }, { status: 403 });
+    await requireInstitutionModuleEntitlement(user.institutionId, "documents");
 
     let docPath = path;
     if (!docPath && documentId) {

@@ -9,8 +9,20 @@ export function sessionTokenHash(token: string) {
 }
 
 export async function getSessionToken(request?: Request) {
-  const authorization = request?.headers.get("authorization") ?? "";
-  if (authorization.startsWith("Bearer ")) return authorization.slice("Bearer ".length);
+  if (request) {
+    const authorization = request.headers.get("authorization") ?? "";
+    if (authorization.startsWith("Bearer ")) return authorization.slice("Bearer ".length);
+    const sessionCookie = request.headers.get("cookie")?.split(";")
+      .map((cookie) => cookie.trim())
+      .find((cookie) => cookie.startsWith("__session="));
+    if (!sessionCookie) return null;
+    const value = sessionCookie.slice("__session=".length);
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
   return (await cookies()).get("__session")?.value ?? null;
 }
 
@@ -28,6 +40,10 @@ export async function verifyActiveSession(token: string): Promise<DecodedIdToken
   if (expiresAt instanceof Timestamp && expiresAt.toMillis() <= Date.now()) {
     await session.ref.update({ status: "expired", updatedAt: FieldValue.serverTimestamp() });
     throw new Error("Session has expired.");
+  }
+  const profile = await adminDb.collection("users").doc(decoded.uid).get();
+  if (profile.exists && profile.get("status") !== "active") {
+    throw new Error("User account is not active.");
   }
   return decoded;
 }

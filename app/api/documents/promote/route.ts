@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { adminDb, adminStorage, adminAuth } from "@/lib/firebase/admin";
+import { adminDb, adminStorage } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { cookies } from "next/headers";
 import { verifyActiveSession } from "@/lib/firebase/server-auth";
+import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 
 async function getSessionToken(req: Request) {
   const authHeader = req.headers.get("authorization") || "";
@@ -26,6 +27,8 @@ export async function POST(req: Request) {
     const userSnap = await adminDb!.collection("users").doc(uid).get();
     if (!userSnap.exists) return NextResponse.json({ error: "User not found" }, { status: 403 });
     const user = userSnap.data()!;
+    if (!user.institutionId) return NextResponse.json({ error: "Institution profile required" }, { status: 403 });
+    await requireInstitutionModuleEntitlement(user.institutionId, "documents");
 
     const docRef = adminDb!.collection("documents").doc(documentId);
     const docSnap = await docRef.get();
@@ -45,14 +48,57 @@ export async function POST(req: Request) {
 
     const sourceFile = adminStorage!.bucket().file(srcPath);
     const destinationFile = adminStorage!.bucket().file(destPath);
-    await sourceFile.move(destinationFile);
-
-    await docRef.update({
-      status: "AVAILABLE",
-      storagePath: destPath,
-      updatedAt: FieldValue.serverTimestamp(),
-      availableAt: FieldValue.serverTimestamp(),
+    await adminDb!.runTransaction(async (transaction) => {
+      const current = await transaction.get(docRef);
+      if (!current.exists || current.get("institutionId") !== user.institutionId
+        || current.get("status") !== "VERIFIED" || current.get("storagePath") !== srcPath) {
+        throw new Error("DOCUMENT_CHANGED");
+      }
+      transaction.update(docRef, { status: "PROMOTING", updatedAt: FieldValue.serverTimestamp() });
     });
+    let moved = false;
+    try {
+      await sourceFile.move(destinationFile);
+      moved = true;
+      await adminDb!.runTransaction(async (transaction) => {
+        const current = await transaction.get(docRef);
+        if (!current.exists || current.get("institutionId") !== user.institutionId
+          || current.get("status") !== "PROMOTING" || current.get("storagePath") !== srcPath) {
+          throw new Error("DOCUMENT_CHANGED");
+        }
+        transaction.update(docRef, {
+          status: "AVAILABLE",
+          storagePath: destPath,
+          updatedAt: FieldValue.serverTimestamp(),
+          availableAt: FieldValue.serverTimestamp(),
+        });
+      });
+    } catch (reason) {
+      let restored = !moved;
+      if (moved) {
+        try {
+          await destinationFile.move(sourceFile);
+          restored = true;
+        } catch (cleanupError) {
+          console.error("Unable to restore a document blob after a failed promotion.", cleanupError);
+        }
+      }
+      try {
+        await adminDb!.runTransaction(async (transaction) => {
+          const current = await transaction.get(docRef);
+          if (current.exists && current.get("status") === "PROMOTING" && current.get("storagePath") === srcPath) {
+            transaction.update(docRef, {
+              status: restored ? "VERIFIED" : "ERROR",
+              ...(restored ? {} : { processingReason: "Storage promotion recovery is required." }),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+          }
+        });
+      } catch (recoveryError) {
+        console.error("Unable to record document promotion recovery state.", recoveryError);
+      }
+      throw reason;
+    }
 
     return NextResponse.json({ ok: true, storagePath: destPath, status: "AVAILABLE" });
   } catch (error) {

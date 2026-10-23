@@ -1,13 +1,22 @@
 import assert from "node:assert/strict";
-import { approveCollaborationContract, contractAllowsAccess, createAssistanceRequest, createCollaborationContract, publicNetworkProfile, revokeCollaborationContract, transitionAssistanceRequest } from "../lib/network";
+import { approveCollaborationContract, canInstitutionTransitionAssistance, canViewAssistanceRequest, contractAllowsAccess, createAssistanceRequest, createCollaborationContract, publicNetworkProfile, revokeCollaborationContract, transitionAssistanceRequest } from "../lib/network";
 
 const request = createAssistanceRequest({ requesterInstitutionId: "A", requestedInstitutionId: "B", requestedBy: "a-owner", subject: "Mutual aid", description: "Please coordinate a service.", requestedScope: "assistance", now: "2026-01-01T00:00:00.000Z" });
 assert.equal(request.state, "Draft");
 const submitted = transitionAssistanceRequest(request, "Submitted");
 assert.equal(submitted.state, "Submitted");
+assert.equal(canInstitutionTransitionAssistance(submitted, "Under Review", "B"), true);
+assert.equal(canInstitutionTransitionAssistance(submitted, "Under Review", "A"), false);
 const underReview = transitionAssistanceRequest(submitted, "Under Review");
 assert.equal(underReview.state, "Under Review");
 assert.equal(transitionAssistanceRequest(underReview, "Clarification Required").state, "Clarification Required");
+assert.equal(canInstitutionTransitionAssistance(underReview, "Accepted", "B"), true);
+assert.equal(canInstitutionTransitionAssistance(underReview, "Completed", "B"), false);
+assert.equal(canInstitutionTransitionAssistance(underReview, "Cancelled", "A"), true);
+assert.equal(canInstitutionTransitionAssistance(underReview, "Accepted", "C"), false);
+assert.equal(canViewAssistanceRequest(submitted, "A"), true);
+assert.equal(canViewAssistanceRequest(submitted, "B"), true);
+assert.equal(canViewAssistanceRequest(submitted, "C"), false, "unrelated institutions cannot read a guessed assistance request");
 assert.throws(() => transitionAssistanceRequest(request, "Completed"), /Invalid assistance/);
 assert.throws(() => transitionAssistanceRequest(underReview, "In Progress"), /Invalid assistance/);
 
@@ -22,6 +31,6 @@ assert.equal(contractAllowsAccess(active, "B", "assistance", new Date("2026-01-1
 const revoked = revokeCollaborationContract(active, "A");
 assert.equal(contractAllowsAccess(revoked, "B", "workspace_records"), false);
 
-const profile = publicNetworkProfile({ institutionId: "A", institutionName: "A", broadLocation: "North", selectedServices: ["coordination"], participation: "open", contactEnabled: true, trustState: "Verified", updatedAt: "2026-01-01" });
+const profile = publicNetworkProfile({ institutionId: "A", institutionName: "A", broadLocation: "North", selectedServices: ["coordination"], participation: "open", contactEnabled: true, trustState: "Enterprise Partner", platformTrustState: "Verified", updatedAt: "2026-01-01" });
 assert.deepEqual(Object.keys(profile).sort(), ["broadLocation", "contactEnabled", "institutionId", "institutionName", "participation", "selectedServices", "trustState", "updatedAt"]);
 console.log("network engine tests passed");

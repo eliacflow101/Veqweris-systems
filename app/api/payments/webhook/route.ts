@@ -46,21 +46,33 @@ export async function POST(request: Request) {
     });
     if (verified.status !== "successful") throw new Error("Provider did not report a successful transaction.");
 
-    let verificationPayment = { ...payment, status: payment.status } as Parameters<typeof transitionPayment>[0];
-    if (verificationPayment.status === "INITIATED") verificationPayment = transitionPayment(verificationPayment, "PENDING");
-    if (verificationPayment.status === "PENDING") verificationPayment = transitionPayment(verificationPayment, "PROVIDER_PROCESSING");
-    if (verificationPayment.status === "PROVIDER_PROCESSING") verificationPayment = transitionPayment(verificationPayment, "PROVIDER_CONFIRMATION");
-    if (verificationPayment.status === "PROVIDER_CONFIRMATION") verificationPayment = transitionPayment(verificationPayment, "SERVER_VERIFICATION");
-    if (verificationPayment.status === "SERVER_VERIFICATION") verificationPayment = transitionPayment(verificationPayment, "VERIFIED");
-    const verifiedPayment = verificationPayment;
-    const finalizedPayment = transitionPayment(transitionPayment(verifiedPayment, "VERIFIED"), "FINALIZED");
-    await db.runTransaction(async (transaction) => {
-      const current = await transaction.get(paymentDoc.ref);
+    const billRef = db.collection("bills").doc(String(payment.billId));
+    const duplicate = await db.runTransaction(async (transaction) => {
+      const [current, currentBill, currentEvent] = await transaction.getAll(paymentDoc.ref, billRef, eventRef);
       const currentData = current.data();
-      if (!current.exists || currentData?.status === "FINALIZED") {
-        transaction.create(eventRef, { provider: "flutterwave", providerEventId: providerId, status: "duplicate", receivedAt: FieldValue.serverTimestamp() });
-        return;
+      if (currentEvent.exists) return true;
+      if (!current.exists || !currentData
+        || currentData.institutionId !== payment.institutionId
+        || currentData.internalReference !== txRef
+        || currentData.billId !== payment.billId) {
+        throw new Error("Payment context changed during verification.");
       }
+      if (currentData.status === "FINALIZED") {
+        transaction.create(eventRef, { provider: "flutterwave", providerEventId: providerId, status: "duplicate", receivedAt: FieldValue.serverTimestamp() });
+        return true;
+      }
+      const billData = currentBill.data();
+      if (!currentBill.exists || !billData || billData.institutionId !== currentData.institutionId
+        || billData.status === "PAID" || billData.status === "CANCELLED") {
+        throw new Error("Bill context changed during payment verification.");
+      }
+      let verificationPayment = { ...currentData, status: currentData.status } as Parameters<typeof transitionPayment>[0];
+      if (verificationPayment.status === "INITIATED") verificationPayment = transitionPayment(verificationPayment, "PENDING");
+      if (verificationPayment.status === "PENDING") verificationPayment = transitionPayment(verificationPayment, "PROVIDER_PROCESSING");
+      if (verificationPayment.status === "PROVIDER_PROCESSING") verificationPayment = transitionPayment(verificationPayment, "PROVIDER_CONFIRMATION");
+      if (verificationPayment.status === "PROVIDER_CONFIRMATION") verificationPayment = transitionPayment(verificationPayment, "SERVER_VERIFICATION");
+      if (verificationPayment.status === "SERVER_VERIFICATION") verificationPayment = transitionPayment(verificationPayment, "VERIFIED");
+      const finalizedPayment = transitionPayment(verificationPayment, "FINALIZED");
       transaction.update(paymentDoc.ref, {
         ...finalizedPayment,
         providerReference: providerId,
@@ -69,7 +81,7 @@ export async function POST(request: Request) {
         updatedAt: FieldValue.serverTimestamp(),
         verifiedAt: FieldValue.serverTimestamp(),
       });
-      transaction.update(db.collection("bills").doc(payment.billId), { status: "PAID", updatedAt: FieldValue.serverTimestamp() });
+      transaction.update(billRef, { status: "PAID", updatedAt: FieldValue.serverTimestamp() });
       const receiptRef = db.collection("receipts").doc();
       transaction.create(receiptRef, {
         receiptId: receiptRef.id,
@@ -86,8 +98,9 @@ export async function POST(request: Request) {
         issuedAt: FieldValue.serverTimestamp(),
       });
       transaction.create(eventRef, { provider: "flutterwave", providerEventId: providerId, status: "processed", paymentId: payment.paymentId, receivedAt: FieldValue.serverTimestamp() });
+      return false;
     });
-    return NextResponse.json({ received: true });
+    return NextResponse.json({ received: true, duplicate });
   } catch (reason) {
     console.error("Unable to process Flutterwave webhook.", reason);
     return NextResponse.json({ error: "Webhook verification failed." }, { status: 400 });

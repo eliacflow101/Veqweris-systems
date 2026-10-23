@@ -1,13 +1,15 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import * as XLSX from "xlsx";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { buildImportPreview } from "@/lib/people-engine";
-import { verifyActiveSession } from "@/lib/firebase/server-auth";
-
-const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
-const ALLOWED_IMPORT_EXTENSIONS = new Set(["csv", "xls", "xlsx"]);
+import {
+  EmployeeImportCsvError,
+  MAX_EMPLOYEE_IMPORT_BYTES,
+  MAX_EMPLOYEE_IMPORT_ROWS,
+  parseEmployeeImportCsv,
+} from "@/lib/employee-import/csv";
+import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 
 export async function POST(request: Request) {
   try {
@@ -15,7 +17,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Firebase server is not configured." }, { status: 503 });
     }
 
-    const sessionToken = (await cookies()).get("__session")?.value;
+    const sessionToken = await getSessionToken(request);
     if (!sessionToken) {
       return NextResponse.json({ error: "You must be signed in." }, { status: 401 });
     }
@@ -34,35 +36,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No import file was provided." }, { status: 400 });
     }
 
-    // In Next.js request.formData() returns Web File-like objects; convert to buffer
-    const fileName = (file as any).name ?? "employee-import";
-    const extension = String(fileName).split(".").pop()?.toLowerCase() ?? "";
-    if (!ALLOWED_IMPORT_EXTENSIONS.has(extension)) {
-      return NextResponse.json({ error: "Only CSV and Excel files are accepted." }, { status: 400 });
+    if (typeof file === "string") {
+      return NextResponse.json({ error: "The import must be a CSV file." }, { status: 400 });
     }
 
-    const size = (file as any).size ?? 0;
-    if (size <= 0 || size > MAX_IMPORT_BYTES) {
+    const fileName = file.name || "employee-import.csv";
+    if (fileName.split(".").pop()?.toLowerCase() !== "csv") {
+      return NextResponse.json({ error: "Only UTF-8 CSV files are accepted." }, { status: 400 });
+    }
+
+    const size = file.size;
+    if (size <= 0 || size > MAX_EMPLOYEE_IMPORT_BYTES) {
       return NextResponse.json({ error: "Import files must be between 1 byte and 5 MB." }, { status: 400 });
     }
 
-    const arrayBuffer = await (file as any).arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Parse workbook
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-    if (!firstSheet) {
-      return NextResponse.json({ error: "The uploaded file is empty or unreadable." }, { status: 400 });
-    }
-
-    // Convert sheet to JSON rows using header row detection
-    const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "", raw: false }) as Record<string, unknown>[];
-    if (!rows.length) {
-      return NextResponse.json({ error: "No data rows were found in the imported file." }, { status: 400 });
-    }
+    const rows = parseEmployeeImportCsv(new Uint8Array(await file.arrayBuffer()));
 
     const institutionId = userData.institutionId;
+    await requireInstitutionModuleEntitlement(institutionId, "employees");
     // Load existing users in institution for duplicate detection
     const existingUsersSnap = await adminDb.collection("users").where("institutionId", "==", institutionId).get();
     const existing = existingUsersSnap.docs.map((snapshot) => {
@@ -86,38 +77,37 @@ export async function POST(request: Request) {
     const validCount = preview.filter((row) => row.allowed).length;
     const rejectedCount = preview.filter((row) => !row.allowed).length;
 
-    // Persist batch for review
     const batchRef = adminDb.collection("bulkImportBatches").doc();
-    await batchRef.set({
-      batchId: batchRef.id,
-      institutionId,
-      createdBy: decoded.uid,
-      fileName,
-      sourceType: extension === "csv" ? "csv" : "xlsx",
-      status: "pending_review",
-      rows: preview,
-      validCount,
-      rejectedCount,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
-    // Log audit/security event
     const auditRef = adminDb.collection("securityEvents").doc();
-    await auditRef.set({
-      eventId: auditRef.id,
-      institutionId,
-      uid: decoded.uid,
-      type: "sensitive_action",
-      source: "employees.import",
-      details: {
-        action: "bulk_import_preview",
+    await adminDb.runTransaction(async (transaction) => {
+      transaction.create(batchRef, {
+        batchId: batchRef.id,
+        institutionId,
+        createdBy: decoded.uid,
         fileName,
+        sourceType: "csv",
+        status: "pending_review",
+        rows: preview,
         validCount,
         rejectedCount,
-        batchId: batchRef.id,
-      },
-      createdAt: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      transaction.create(auditRef, {
+        eventId: auditRef.id,
+        institutionId,
+        uid: decoded.uid,
+        type: "sensitive_action",
+        source: "employees.import",
+        details: {
+          action: "bulk_import_preview",
+          fileName,
+          validCount,
+          rejectedCount,
+          batchId: batchRef.id,
+        },
+        createdAt: FieldValue.serverTimestamp(),
+      });
     });
 
     return NextResponse.json({
@@ -128,6 +118,16 @@ export async function POST(request: Request) {
       message: "Import preview ready for review.",
     });
   } catch (reason) {
+    if (reason instanceof EmployeeImportCsvError) {
+      const message = reason.code === "too-large"
+        ? "Import files must not exceed 5 MB."
+        : reason.code === "too-many-rows"
+          ? `Import files must not exceed ${MAX_EMPLOYEE_IMPORT_ROWS} data rows.`
+          : reason.code === "empty"
+            ? "The CSV file contains no data rows."
+            : "The uploaded file is not a valid UTF-8 CSV file.";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
     console.error("Unable to import employee batch.", reason);
     return NextResponse.json({ error: "Unable to process the employee import file." }, { status: 500 });
   }

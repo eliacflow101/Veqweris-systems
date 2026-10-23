@@ -21,29 +21,18 @@ export default function DocumentsPage() {
     setMessage(null);
     try {
       const authHeader = await user.getIdToken();
+      const uploadForm = new FormData();
+      uploadForm.set("file", file);
+      uploadForm.set("module", "documents");
+      if (profile.departmentId) uploadForm.set("departmentId", profile.departmentId);
       const initRes = await fetch("/api/documents/upload", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authHeader}` },
-        body: JSON.stringify({
-          name: file.name,
-          mimeType: file.type || "application/octet-stream",
-          size: file.size,
-          institutionId: profile.institutionId,
-          module: "documents",
-          entityRef: null,
-          departmentId: profile.departmentId,
-        }),
+        headers: { Authorization: `Bearer ${authHeader}` },
+        body: uploadForm,
       });
       const initJson = await initRes.json();
-      if (!initRes.ok) throw new Error(initJson.error || "Upload initialization failed");
-
-      const { uploadUrl, documentId } = initJson;
-      const uploadRes = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      });
-      if (!uploadRes.ok) throw new Error("File upload to quarantine failed");
+      if (!initRes.ok) throw new Error(initJson.error || "Document upload failed");
+      const { documentId } = initJson;
 
       const processRes = await fetch("/api/documents/process", {
         method: "POST",

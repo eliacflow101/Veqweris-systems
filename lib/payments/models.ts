@@ -13,7 +13,7 @@ export type PaymentStatus =
   | "REVERSED"
   | "DISPUTED";
 
-export type RefundStatus = "REQUESTED" | "PROCESSING" | "COMPLETED" | "PARTIAL" | "FAILED";
+export type RefundStatus = "REQUESTED" | "PROCESSING" | "COMPLETED" | "PARTIAL" | "FAILED" | "AMBIGUOUS";
 export type FinancialExceptionStatus = "DETECTED" | "TRIAGED" | "INVESTIGATING" | "EVIDENCE_REQUESTED" | "RESOLVED" | "ADJUSTED" | "VERIFIED" | "CLOSED";
 
 export interface BillItem {

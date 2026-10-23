@@ -3,6 +3,8 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { institutionHasFeatureEntitlement } from "@/lib/platform/tenant-entitlements";
+import { withInstitutionCapacity } from "@/lib/platform/capacity";
 import { hashIntegrationKey } from "@/lib/integrations";
 
 const allowedScopes = new Set(["hospitality:bookings", "retail:orders"]);
@@ -14,7 +16,8 @@ async function authenticate(request: Request) {
   const decoded = await verifyActiveSession(token);
   const snapshot = await adminDb.collection("users").doc(decoded.uid).get();
   const profile = snapshot.data();
-  if (!profile?.institutionId || !["Owner", "Admin"].includes(profile.role) || profile.status === "inactive") throw new Error("FORBIDDEN");
+  if (!profile?.institutionId || !["Owner", "Admin"].includes(profile.role) || profile.status !== "active") throw new Error("FORBIDDEN");
+  if (!await institutionHasFeatureEntitlement(profile.institutionId, "external-integrations")) throw new Error("FORBIDDEN");
   return { uid: decoded.uid, profile };
 }
 
@@ -27,7 +30,7 @@ function failure(error: unknown) {
 export async function GET(request: Request) {
   try {
     const { profile } = await authenticate(request);
-    const snapshot = await adminDb!.collection("integrations").where("institutionId", "==", profile.institutionId).get();
+    const snapshot = await adminDb!.collection("integrations").where("institutionId", "==", profile.institutionId).limit(200).get();
     return NextResponse.json({ integrations: snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })) });
   } catch (error) { return failure(error); }
 }
@@ -47,12 +50,26 @@ export async function POST(request: Request) {
       integrationId: integrationRef.id, institutionId: profile.institutionId, provider: body.provider,
       name: body.name, status: "active", scopes: body.scopes, createdBy: uid, createdAt: now, updatedAt: now,
     };
-    await integrationRef.create(record);
-    await adminDb!.collection("integrationCredentials").doc(keyId).set({
-      integrationId: integrationRef.id, institutionId: profile.institutionId, provider: body.provider,
-      keyIdHash: hashIntegrationKey(keyId), secret, status: "active", scopes: body.scopes, createdAt: now, updatedAt: now,
+    const credentialRef = adminDb!.collection("integrationCredentials").doc(keyId);
+    await withInstitutionCapacity({
+      db: adminDb!,
+      institutionId: profile.institutionId,
+      limit: "maxIntegrationEndpoints",
+      amount: 1,
+      write: (transaction) => {
+        transaction.create(integrationRef, record);
+        transaction.create(credentialRef, {
+          integrationId: integrationRef.id, institutionId: profile.institutionId, provider: body.provider,
+          keyIdHash: hashIntegrationKey(keyId), secret, status: "active", scopes: body.scopes, createdAt: now, updatedAt: now,
+        });
+      },
     });
     // The secret is returned once and is never copied into the provider-neutral record.
     return NextResponse.json({ integration: record, credentials: { keyId, secret } }, { status: 201 });
-  } catch (error) { return failure(error); }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PLAN_LIMIT_EXCEEDED")) {
+      return NextResponse.json({ error: "The institution has reached its integration endpoint plan limit." }, { status: 409 });
+    }
+    return failure(error);
+  }
 }

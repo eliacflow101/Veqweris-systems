@@ -2,6 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 
 const collections = new Set(["hotelRooms", "hotelReservations", "hospitalityOutlets", "hospitalityOrders", "housekeepingTasks", "maintenanceTickets", "retailCatalogItems", "retailSales"]);
 
@@ -12,6 +13,8 @@ async function context(request: Request) {
   const decoded = await verifyActiveSession(token);
   const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
   if (!profile?.institutionId) throw new Error("Institution profile required.");
+  if (!["Owner", "Admin", "Manager", "Employee"].includes(profile.role)) throw new Error("Hospitality access is restricted.");
+  await requireInstitutionModuleEntitlement(profile.institutionId, "hospitality");
   return profile;
 }
 

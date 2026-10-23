@@ -1,4 +1,5 @@
-export type NetworkTrustState = "Registered" | "Verified" | "Trusted Network Member" | "Enterprise Partner" | "Restricted" | "Suspended" | "Revoked";
+export const networkTrustStates = ["Registered", "Verified", "Trusted Network Member", "Enterprise Partner", "Restricted", "Suspended", "Revoked"] as const;
+export type NetworkTrustState = (typeof networkTrustStates)[number];
 export type NetworkParticipation = "open" | "invite_only" | "not_accepting";
 export type AssistanceRequestState = "Draft" | "Submitted" | "Under Review" | "Accepted" | "Declined" | "Clarification Required" | "In Progress" | "Completed" | "Cancelled" | "Expired";
 export type ContractState = "pending_approval" | "active" | "expired" | "revoked";
@@ -13,6 +14,7 @@ export interface NetworkProfile {
   participation: NetworkParticipation;
   contactEnabled: boolean;
   trustState: NetworkTrustState;
+  platformTrustState?: NetworkTrustState;
   updatedAt: string;
 }
 

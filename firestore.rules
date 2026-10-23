@@ -10,7 +10,9 @@ service cloud.firestore {
     }
 
     function sameInstitution(institutionId) {
-      return signedIn() && userDoc(request.auth.uid).data.institutionId == institutionId;
+      return signedIn()
+        && userDoc(request.auth.uid).data.institutionId == institutionId
+        && get(/databases/$(database)/documents/institutions/$(institutionId)).data.status == "active";
     }
 
     function hasRole(role) {
@@ -19,6 +21,72 @@ service cloud.firestore {
 
     function ownerOrAdmin() {
       return hasRole("Owner") || hasRole("Admin");
+    }
+
+    function signupPlanAllowsInitialUser() {
+      let basicPlanPath = /databases/$(database)/documents/platformPlanCatalog/basic;
+      return !exists(basicPlanPath)
+        || (
+          get(basicPlanPath).data.status == "active"
+          && "limits" in get(basicPlanPath).data
+          && (
+            get(basicPlanPath).data.limits.maxUsers == -1
+            || get(basicPlanPath).data.limits.maxUsers >= 1
+          )
+        );
+    }
+
+    function institutionHasModule(moduleId) {
+      let uid = request.auth.uid;
+      let userPath = /databases/$(database)/documents/users/$(uid);
+      return signedIn() && exists(userPath)
+        && institutionHasModuleFor(userDoc(uid).data.institutionId, moduleId);
+    }
+
+    function institutionHasModuleFor(institutionId, moduleId) {
+      let institution = get(/databases/$(database)/documents/institutions/$(institutionId)).data;
+      return institution.status == "active"
+        && (
+          ("entitlement" in institution
+            && "modules" in institution.entitlement
+            && moduleId in institution.entitlement.modules)
+          || (!("entitlement" in institution)
+            && (
+              institution.planTier in ["internal", "developer", "partner", "enterprise"]
+              || (institution.planTier in ["trial", "basic"]
+                && moduleId in ["dashboard", "departments", "employees", "tasks", "planner", "messages", "notifications", "documents", "reports", "approvals", "settings", "inventory", "setup"])
+              || (institution.planTier == "professional"
+                && moduleId in ["dashboard", "departments", "employees", "tasks", "planner", "messages", "notifications", "documents", "reports", "approvals", "settings", "inventory", "setup", "compliance", "analytics", "operational-intelligence", "network", "school", "healthcare", "hospitality"])
+            ))
+        );
+    }
+
+    function institutionHasFeature(featureId) {
+      let uid = request.auth.uid;
+      let userPath = /databases/$(database)/documents/users/$(uid);
+      return signedIn() && exists(userPath)
+        && institutionHasFeatureFor(userDoc(uid).data.institutionId, featureId);
+    }
+
+    function institutionHasFeatureFor(institutionId, featureId) {
+      let institution = get(/databases/$(database)/documents/institutions/$(institutionId)).data;
+      return institution.status == "active"
+        && (
+          ("entitlement" in institution
+            && "features" in institution.entitlement
+            && featureId in institution.entitlement.features)
+          || (!("entitlement" in institution)
+            && (
+              institution.planTier in ["internal", "developer", "partner", "enterprise"]
+              || (institution.planTier == "professional"
+                && featureId in ["external-integrations", "institutional-network", "document-automation", "data-export"])
+            ))
+        );
+    }
+
+    function platformControlledInstitutionKeys() {
+      return ["status", "planTier", "relationship", "subscription", "entitlement", "policies",
+        "securityState", "billingState", "platformUpdatedAt", "platformUpdatedBy"];
     }
 
     function setupOperator() {
@@ -31,8 +99,9 @@ service cloud.firestore {
     }
 
     function healthcareRole() {
-      return ownerOrAdmin() || hasRole("Manager") || hasRole("Clinician") || hasRole("Nurse")
-        || hasRole("Reception") || hasRole("Billing") || hasRole("Laboratory") || hasRole("Pharmacist");
+      return institutionHasModule("healthcare")
+        && (ownerOrAdmin() || hasRole("Manager") || hasRole("Clinician") || hasRole("Nurse")
+          || hasRole("Reception") || hasRole("Billing") || hasRole("Laboratory") || hasRole("Pharmacist"));
     }
 
     function healthcareSensitiveAccess() {
@@ -72,22 +141,51 @@ service cloud.firestore {
     }
 
     match /operationalIntelligence/{recordId} {
-      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
-      allow create: if signedIn() && sameInstitution(request.resource.data.institutionId)
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("operational-intelligence");
+      allow create: if signedIn() && sameInstitution(request.resource.data.institutionId) && institutionHasModule("operational-intelligence")
         && request.resource.data.createdBy == request.auth.uid;
       allow update, delete: if false;
     }
 
     match /institutions/{institutionId} {
       allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.institutionId == institutionId
         && request.resource.data.status == "active"
         && request.resource.data.planTier == "trial"
+        && request.resource.data.keys().hasOnly(["institutionId", "createdBy", "name", "country", "location", "status", "planTier", "createdAt"])
         && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.institutionId == institutionId
         && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "Owner";
       allow read: if sameInstitution(institutionId);
-      allow update: if sameInstitution(institutionId) && ownerOrAdmin();
+      allow update: if sameInstitution(institutionId) && ownerOrAdmin()
+        && request.resource.data.institutionId == resource.data.institutionId
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(platformControlledInstitutionKeys())
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["name", "country", "location", "updatedAt"]);
       allow delete: if false;
+    }
+
+    match /platformOperators/{uid} {
+      allow read, write: if false;
+    }
+
+    match /platformSupportGrants/{grantId} {
+      allow read, write: if false;
+    }
+
+    match /platformAuditEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /platformMonitoringSignals/{signalId} {
+      allow read, write: if false;
+    }
+
+    match /platformBootstrap/{bootstrapId} {
+      allow read, write: if false;
+    }
+
+    match /platformMetadata/{metadataId} {
+      allow read, write: if false;
     }
 
     match /users/{uid} {
@@ -95,14 +193,19 @@ service cloud.firestore {
         && uid == request.auth.uid
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.role == "Owner"
-        && getAfter(/databases/$(database)/documents/institutions/$(request.resource.data.institutionId)).data.institutionId == request.resource.data.institutionId;
-      allow read: if signedIn() && (uid == request.auth.uid || sameInstitution(resource.data.institutionId));
+        && signupPlanAllowsInitialUser()
+        && getAfter(/databases/$(database)/documents/institutions/$(request.resource.data.institutionId)).data.institutionId == request.resource.data.institutionId
+        && getAfter(/databases/$(database)/documents/institutions/$(request.resource.data.institutionId)).data.createdBy == request.auth.uid;
+      allow read: if signedIn() && (uid == request.auth.uid || (sameInstitution(resource.data.institutionId) && institutionHasModule("employees")));
       allow update: if signedIn() && (
         (uid == request.auth.uid
           && request.resource.data.uid == resource.data.uid
           && request.resource.data.institutionId == resource.data.institutionId
-          && request.resource.data.role == resource.data.role)
-        || (ownerOrAdmin() && sameInstitution(resource.data.institutionId)
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "fullName", "email", "phone", "photoUrl", "preferences", "lastActive", "sessionPolicy"
+          ]))
+        || (ownerOrAdmin() && sameInstitution(resource.data.institutionId) && institutionHasModule("employees")
           && request.resource.data.uid == resource.data.uid
           && request.resource.data.institutionId == resource.data.institutionId)
       );
@@ -110,12 +213,10 @@ service cloud.firestore {
     }
 
     match /departments/{departmentId} {
-      allow read: if sameInstitution(resource.data.institutionId);
-      allow create: if ownerOrAdmin()
-        && request.resource.data.departmentId == departmentId
-        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
-        && request.resource.data.status == "active";
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("departments");
+      allow create: if false;
       allow update: if sameInstitution(resource.data.institutionId)
+        && institutionHasModule("departments")
         && request.resource.data.departmentId == resource.data.departmentId
         && request.resource.data.institutionId == resource.data.institutionId
         && (
@@ -127,83 +228,85 @@ service cloud.firestore {
           )
         );
       allow delete: if ownerOrAdmin()
-        && sameInstitution(resource.data.institutionId);
+        && sameInstitution(resource.data.institutionId)
+        && institutionHasModule("departments");
     }
 
     function schoolStaff() {
-      return ownerOrAdmin() || hasRole("Manager");
+      return institutionHasModule("school") && (ownerOrAdmin() || hasRole("Manager"));
     }
 
     function hasSchoolPermission(permission) {
       return signedIn()
+        && institutionHasModule("school")
         && userDoc(request.auth.uid).data.schoolPermissions != null
         && permission in userDoc(request.auth.uid).data.schoolPermissions;
     }
 
     match /schoolProfiles/{profileId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if ownerOrAdmin()
         && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
 
     match /academicYears/{academicYearId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if ownerOrAdmin()
         && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
 
     match /academicLevels/{levelId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if ownerOrAdmin() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
 
     match /schoolClasses/{classId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if ownerOrAdmin();
     }
 
     match /schoolStreams/{streamId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if ownerOrAdmin();
     }
 
     match /schoolSubjects/{subjectId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if ownerOrAdmin();
     }
 
     match /curricula/{curriculumId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if ownerOrAdmin();
     }
 
     match /students/{studentId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
 
     match /academicEnrollments/{enrollmentId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
 
     match /guardians/{guardianId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
 
     match /studentGuardianLinks/{linkId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
@@ -237,41 +340,48 @@ service cloud.firestore {
 
     match /schoolHealthRecords/{recordId} {
       allow read, update: if sameInstitution(resource.data.institutionId)
+        && institutionHasModule("school")
         && (ownerOrAdmin() || hasSchoolPermission("school.health.sensitive"));
       allow create: if request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && institutionHasModule("school")
         && (ownerOrAdmin() || hasSchoolPermission("school.health.sensitive"));
       allow delete: if false;
     }
 
     match /welfareIncidents/{incidentId} {
       allow read, update: if sameInstitution(resource.data.institutionId)
+        && institutionHasModule("school")
         && (ownerOrAdmin() || hasSchoolPermission("school.welfare.sensitive"));
       allow create: if request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && institutionHasModule("school")
         && (ownerOrAdmin() || hasSchoolPermission("school.welfare.sensitive"));
       allow delete: if false;
     }
 
     match /safeguardingCases/{caseId} {
       allow read, update: if sameInstitution(resource.data.institutionId)
+        && institutionHasModule("school")
         && (ownerOrAdmin() || hasSchoolPermission("school.safeguarding.sensitive"));
       allow create: if request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && institutionHasModule("school")
         && (ownerOrAdmin() || hasSchoolPermission("school.safeguarding.sensitive"));
       allow delete: if false;
     }
 
     match /placementReviews/{placementReviewId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("school");
       allow create, update: if schoolStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
 
     function healthcareStaff() {
-      return healthcareRole();
+      return institutionHasModule("healthcare") && healthcareRole();
     }
 
     match /healthcareProfiles/{profileId} {
-      allow read: if sameInstitution(resource.data.institutionId);
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("healthcare");
       allow create, update: if ownerOrAdmin()
+        && institutionHasModule("healthcare")
         && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
@@ -567,6 +677,7 @@ service cloud.firestore {
       // Documents collection: tenant-scoped, role-aware access control
       match /documents/{documentId} {
         allow create: if signedIn()
+          && institutionHasModule("documents")
           && request.resource.data.documentId == documentId
           && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
           && request.resource.data.uploadedBy == request.auth.uid
@@ -576,6 +687,7 @@ service cloud.firestore {
 
         allow read: if signedIn()
           && sameInstitution(resource.data.institutionId)
+          && institutionHasModule("documents")
           && (
             ownerOrAdmin()
             || request.auth.uid == resource.data.uploadedBy
@@ -586,6 +698,7 @@ service cloud.firestore {
 
         allow update: if signedIn()
           && sameInstitution(resource.data.institutionId)
+          && institutionHasModule("documents")
           && request.resource.data.documentId == resource.data.documentId
           && request.resource.data.institutionId == resource.data.institutionId
           && (
@@ -593,7 +706,7 @@ service cloud.firestore {
             || request.auth.uid == resource.data.uploadedBy
           );
 
-        allow delete: if sameInstitution(resource.data.institutionId) && ownerOrAdmin();
+        allow delete: if sameInstitution(resource.data.institutionId) && institutionHasModule("documents") && ownerOrAdmin();
       }
 
       match /bulkImportBatches/{batchId} {
@@ -638,8 +751,9 @@ service cloud.firestore {
       }
 
       match /analyticsSnapshots/{snapshotId} {
-        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("analytics");
         allow create: if signedIn() && ownerOrAdmin()
+          && institutionHasModule("analytics")
           && sameInstitution(request.resource.data.institutionId)
           && request.resource.data.metricId is string
           && request.resource.data.snapshotId == snapshotId;
@@ -647,7 +761,7 @@ service cloud.firestore {
       }
 
       match /analyticsExportAudit/{exportId} {
-        allow read: if signedIn() && ownerOrAdmin() && sameInstitution(resource.data.institutionId);
+        allow read: if signedIn() && ownerOrAdmin() && sameInstitution(resource.data.institutionId) && institutionHasModule("analytics");
         allow create, update, delete: if false;
       }
 
@@ -721,21 +835,23 @@ service cloud.firestore {
       }
 
       match /inventoryItems/{itemId} {
-        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("inventory");
         allow create, update: if signedIn()
+          && institutionHasModule("inventory")
           && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
           && (ownerOrAdmin() || hasRole("Manager") || hasRole("Operator") || hasRole("Service Worker"));
-        allow delete: if ownerOrAdmin();
+        allow delete: if ownerOrAdmin() && institutionHasModule("inventory");
       }
 
       match /inventoryMovements/{movementId} {
-        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("inventory");
         allow create, update, delete: if false;
       }
 
       match /inventoryReservations/{reservationId} {
-        allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+        allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("inventory");
         allow create, update: if signedIn()
+          && institutionHasModule("inventory")
           && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
           && (ownerOrAdmin() || hasRole("Manager") || hasRole("Operator"));
         allow delete: if false;
@@ -803,68 +919,69 @@ service cloud.firestore {
       }
 
     function hospitalityStaff() {
-      return ownerOrAdmin() || hasRole("Manager") || hasRole("Employee")
-        || hasRole("Operator") || hasRole("Service Worker");
+      return institutionHasModule("hospitality")
+        && (ownerOrAdmin() || hasRole("Manager") || hasRole("Employee")
+          || hasRole("Operator") || hasRole("Service Worker"));
     }
 
     match /hotelRooms/{recordId} {
-      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("hospitality");
       allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
-      allow delete: if ownerOrAdmin();
+      allow delete: if ownerOrAdmin() && institutionHasModule("hospitality");
     }
     match /hotelReservations/{recordId} {
-      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("hospitality");
       allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
-      allow delete: if ownerOrAdmin();
+      allow delete: if ownerOrAdmin() && institutionHasModule("hospitality");
     }
     match /hospitalityOutlets/{recordId} {
-      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("hospitality");
       allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
-      allow delete: if ownerOrAdmin();
+      allow delete: if ownerOrAdmin() && institutionHasModule("hospitality");
     }
     match /hospitalityOrders/{recordId} {
-      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("hospitality");
       allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
     match /housekeepingTasks/{recordId} {
-      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("hospitality");
       allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
     match /maintenanceTickets/{recordId} {
-      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("hospitality");
       allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
     match /retailCatalogItems/{recordId} {
-      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("hospitality");
       allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
-      allow delete: if ownerOrAdmin();
+      allow delete: if ownerOrAdmin() && institutionHasModule("hospitality");
     }
     match /retailSales/{recordId} {
-      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasModule("hospitality");
       allow create, update: if hospitalityStaff() && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId;
       allow delete: if false;
     }
 
     match /setupConfigs/{institutionId} {
-      allow read: if sameInstitution(institutionId);
-      allow create, update: if sameInstitution(institutionId) && setupOperator()
+      allow read: if sameInstitution(institutionId) && institutionHasModule("setup");
+      allow create, update: if sameInstitution(institutionId) && institutionHasModule("setup") && setupOperator()
         && request.resource.data.institutionId == institutionId;
       allow delete: if false;
     }
 
     match /setupRequirements/{requirementId} {
-      allow read: if sameInstitution(resource.data.institutionId);
-      allow create, update: if signedIn() && setupOperator()
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("setup");
+      allow create, update: if signedIn() && institutionHasModule("setup") && setupOperator()
         && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
         && request.resource.data.requirementId == requirementId;
       allow delete: if false;
     }
     match /setupRecommendations/{recommendationId} {
-      allow read: if sameInstitution(resource.data.institutionId);
-      allow create, update: if setupOperator()
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("setup");
+      allow create, update: if institutionHasModule("setup") && setupOperator()
         && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
         && request.resource.data.recommendationId == recommendationId;
       allow delete: if false;
@@ -874,13 +991,12 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow read: if signedIn()
         && sameInstitution(resource.data.institutionId)
+        && institutionHasModule("notifications")
         && resource.data.recipientUid == request.auth.uid;
-      allow create: if signedIn()
-        && sameInstitution(request.resource.data.institutionId)
-        && request.resource.data.recipientUid == request.auth.uid
-        && request.resource.data.notificationId == notificationId;
+      allow create: if false;
       allow update: if signedIn()
         && sameInstitution(resource.data.institutionId)
+        && institutionHasModule("notifications")
         && resource.data.recipientUid == request.auth.uid
         && request.resource.data.institutionId == resource.data.institutionId
         && request.resource.data.recipientUid == resource.data.recipientUid
@@ -891,10 +1007,8 @@ service cloud.firestore {
     // Integrations are managed by workspace administrators. Provider credentials,
     // webhook events and gateway side effects are server-only.
     match /integrations/{integrationId} {
-      allow read: if signedIn() && sameInstitution(resource.data.institutionId);
-      allow create, update: if ownerOrAdmin()
-        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
-        && request.resource.data.integrationId == integrationId;
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId) && institutionHasFeature("external-integrations");
+      allow create, update: if false;
       allow delete: if false;
     }
     match /integrationCredentials/{credentialId} {
@@ -918,42 +1032,45 @@ service cloud.firestore {
     // Operational and personal collections remain covered by their tenant rules.
     match /networkProfiles/{institutionId} {
       allow read: if signedIn() && resource.data.institutionId == institutionId
+        && institutionHasModule("network")
         && !(resource.data.trustState in ["Restricted", "Suspended", "Revoked"]);
-      allow create, update: if ownerOrAdmin()
+      allow create: if ownerOrAdmin()
+        && institutionHasModule("network")
         && userDoc(request.auth.uid).data.institutionId == institutionId
         && request.resource.data.institutionId == institutionId
-        && request.resource.data.keys().hasOnly(["institutionId", "institutionName", "broadLocation", "selectedServices", "participation", "contactEnabled", "trustState", "updatedAt"]);
+        && request.resource.data.keys().hasOnly(["institutionId", "institutionName", "broadLocation", "selectedServices", "participation", "contactEnabled", "trustState", "updatedAt"])
+        && request.resource.data.trustState == "Registered";
+      allow update: if ownerOrAdmin()
+        && institutionHasModule("network")
+        && userDoc(request.auth.uid).data.institutionId == institutionId
+        && request.resource.data.institutionId == institutionId
+        && request.resource.data.keys().hasOnly(["institutionId", "institutionName", "broadLocation", "selectedServices", "participation", "contactEnabled", "trustState", "updatedAt", "platformTrustState"])
+        && request.resource.data.trustState == resource.data.trustState
+        && (!("platformTrustState" in request.resource.data)
+          || request.resource.data.platformTrustState == resource.data.platformTrustState);
       allow delete: if false;
     }
 
     match /assistanceRequests/{requestId} {
-      allow read: if signedIn() && (resource.data.requesterInstitutionId == userDoc(request.auth.uid).data.institutionId
+      allow read: if signedIn() && institutionHasModule("network") && (resource.data.requesterInstitutionId == userDoc(request.auth.uid).data.institutionId
         || resource.data.requestedInstitutionId == userDoc(request.auth.uid).data.institutionId);
-      allow create: if ownerOrAdmin()
-        && request.resource.data.requesterInstitutionId == userDoc(request.auth.uid).data.institutionId
-        && request.resource.data.requestId == requestId;
-      allow update: if ownerOrAdmin()
-        && (resource.data.requesterInstitutionId == userDoc(request.auth.uid).data.institutionId
-          || resource.data.requestedInstitutionId == userDoc(request.auth.uid).data.institutionId)
-        && request.resource.data.requesterInstitutionId == resource.data.requesterInstitutionId
-        && request.resource.data.requestedInstitutionId == resource.data.requestedInstitutionId;
-      allow delete: if false;
+      allow write: if false;
     }
 
     match /networkMemberships/{membershipId} {
-      allow read: if signedIn() && (resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+      allow read: if signedIn() && institutionHasModule("network") && (resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
         || resource.data.memberInstitutionId == userDoc(request.auth.uid).data.institutionId);
       allow write: if false;
     }
 
     match /dataSharingPermissions/{permissionId} {
-      allow read: if signedIn() && (resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+      allow read: if signedIn() && institutionHasModule("network") && (resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
         || resource.data.counterpartyInstitutionId == userDoc(request.auth.uid).data.institutionId);
       allow write: if false;
     }
 
     function contractParticipant(contract) {
-      return signedIn() && (contract.institutionAId == userDoc(request.auth.uid).data.institutionId
+      return signedIn() && institutionHasModule("network") && (contract.institutionAId == userDoc(request.auth.uid).data.institutionId
         || contract.institutionBId == userDoc(request.auth.uid).data.institutionId);
     }
 
@@ -964,6 +1081,7 @@ service cloud.firestore {
 
     match /networkWorkspaceRecords/{recordId} {
       allow read: if signedIn()
+        && institutionHasModule("network")
         && exists(/databases/$(database)/documents/collaborationContracts/$(resource.data.contractId))
         && get(/databases/$(database)/documents/collaborationContracts/$(resource.data.contractId)).data.status == "active"
         && contractParticipant(get(/databases/$(database)/documents/collaborationContracts/$(resource.data.contractId)).data)

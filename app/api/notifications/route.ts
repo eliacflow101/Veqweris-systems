@@ -2,6 +2,8 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
+import { institutionHasModuleEntitlement } from "@/lib/platform/tenant-entitlements";
+import { withInstitutionCapacity } from "@/lib/platform/capacity";
 import { createNotification, filterNotifications, markNotification, type NotificationEvent, type NotificationFilter } from "@/lib/notifications";
 
 async function auth(request: Request) {
@@ -10,12 +12,16 @@ async function auth(request: Request) {
   if (!token) throw new Error("UNAUTHENTICATED");
   const decoded = await verifyActiveSession(token);
   const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
-  if (!profile?.institutionId) throw new Error("FORBIDDEN");
+  if (!profile?.institutionId || profile.status !== "active") throw new Error("FORBIDDEN");
+  if (!await institutionHasModuleEntitlement(profile.institutionId, "notifications")) throw new Error("FORBIDDEN");
   return { uid: decoded.uid, profile };
 }
 function error(reason: unknown) {
   const code = reason instanceof Error ? reason.message : "";
-  return NextResponse.json({ error: code === "UNAUTHENTICATED" ? "Authentication required." : "Unable to process notifications." }, { status: code === "UNAUTHENTICATED" ? 401 : code === "FORBIDDEN" ? 403 : 400 });
+  const status = code === "UNAUTHENTICATED" ? 401 : code === "FORBIDDEN" ? 403
+    : code.startsWith("PLAN_LIMIT_EXCEEDED") ? 409 : code === "SERVICE_UNAVAILABLE" ? 503 : 400;
+  return NextResponse.json({ error: status === 409 ? "The institution has reached its monthly notification plan limit."
+    : status === 401 ? "Authentication required." : status === 403 ? "Notification access is unavailable." : "Unable to process notifications." }, { status });
 }
 export async function GET(request: Request) {
   try {
@@ -42,9 +48,18 @@ export async function POST(request: Request) {
     const event = body as NotificationEvent;
     const notification = createNotification(event);
     const ref = adminDb!.collection("notifications").doc(notification.notificationId);
-    const existing = await ref.get();
-    if (existing.exists) return NextResponse.json({ notification: existing.data(), duplicate: true });
-    await ref.create({ ...notification, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
-    return NextResponse.json({ notification }, { status: 201 });
+    const result = await withInstitutionCapacity({
+      db: adminDb!,
+      institutionId: profile.institutionId,
+      limit: "maxMonthlyNotifications",
+      amount: 1,
+      idempotencyRef: ref,
+      duplicate: (existing) => ({ notification: existing.data(), duplicate: true }),
+      write: (transaction) => {
+        transaction.create(ref, { ...notification, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+        return { notification, duplicate: false };
+      },
+    });
+    return NextResponse.json(result, { status: result.duplicate ? 200 : 201 });
   } catch (reason) { return error(reason); }
 }

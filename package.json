@@ -14,20 +14,25 @@
     "test:analytics": "tsx tests/analytics-engine.test.ts",
     "test:governance": "tsx tests/governance-engine.test.ts",
     "test:setup": "tsx tests/setup-engine.test.ts",
-    "test:integrations": "tsx tests/integration-gateway.test.ts"
-    ,"test:operational-intelligence": "tsx tests/operational-intelligence.test.ts"
-    ,"test:notifications": "tsx tests/notifications-engine.test.ts"
-    ,"test:network": "tsx tests/network-engine.test.ts"
+    "test:integrations": "tsx tests/integration-gateway.test.ts",
+    "test:operational-intelligence": "tsx tests/operational-intelligence.test.ts",
+    "test:notifications": "tsx tests/notifications-engine.test.ts",
+    "test:network": "tsx tests/network-engine.test.ts",
+    "test:platform": "tsx tests/platform-engine.test.ts",
+    "test:platform-routes": "firebase emulators:exec --project demo-veqweris-platform-routes --only auth,firestore \"node --conditions=react-server --import tsx tests/platform-routes.test.ts\"",
+    "test:capacity": "firebase emulators:exec --project demo-veqweris-capacity --only firestore \"tsx tests/capacity.test.ts\"",
+    "test:payment-refunds": "firebase emulators:exec --project demo-veqweris-refunds --only firestore \"node --conditions=react-server --import tsx tests/payment-refunds.test.ts\""
   },
   "dependencies": {
+    "csv-parse": "^7.0.3",
     "firebase": "^12.19.0",
     "firebase-admin": "^13.5.0",
     "lucide-react": "^0.468.0",
-    "next": "^15.5.4",
+    "next": "^15.5.28",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "recharts": "^2.15.4",
-    "xlsx": "^0.18.5"
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.2",

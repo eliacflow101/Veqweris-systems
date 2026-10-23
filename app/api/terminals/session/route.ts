@@ -3,6 +3,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession, verifyTerminalSession } from "@/lib/firebase/server-auth";
+import { institutionIsActive } from "@/lib/platform/tenant-entitlements";
 
 export async function POST(request: Request) {
   try {
@@ -11,6 +12,9 @@ export async function POST(request: Request) {
     if (!token) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     const decoded = await verifyActiveSession(token);
     const profile = (await adminDb.collection("users").doc(decoded.uid).get()).data();
+    if (!profile?.institutionId || !await institutionIsActive(profile.institutionId)) {
+      return NextResponse.json({ error: "Institution terminal access is unavailable." }, { status: 403 });
+    }
     const body = await request.json() as { action?: "register" | "revoke" | "validate" | "lock"; terminalId?: string; sessionId?: string; label?: string; scope?: string };
     if (body.action === "validate") {
       if (!body.sessionId) return NextResponse.json({ error: "sessionId is required." }, { status: 400 });

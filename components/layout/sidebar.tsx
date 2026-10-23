@@ -6,14 +6,18 @@ import { ChevronLeft, ChevronRight, CircleUserRound, PanelLeft } from "lucide-re
 import { useMemo, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { signOut } from "@/lib/firebase/auth";
-import { isFeatureDisabled, navigationGroups } from "@/lib/navigation";
+import { filterNavigationForPlatform, isFeatureDisabled, navigationGroups } from "@/lib/navigation";
+import { usePlatformOperator } from "@/lib/platform/client";
 
 export function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose: () => void }) {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
   const { user, profile } = useAuth();
+  const { isPlatformOperator } = usePlatformOperator();
 
-  const visibleGroups = useMemo(() => navigationGroups.filter((group) => group.items.some((item) => !item.disabled || item.visibility === "future")), [navigationGroups]);
+  const visibleGroups = useMemo(() => navigationGroups
+    .map((group) => ({ ...group, items: filterNavigationForPlatform(group.items, { isPlatformOperator }) }))
+    .filter((group) => group.items.some((item) => !item.disabled || item.visibility === "future")), [isPlatformOperator]);
 
   return (
     <aside className={`fixed inset-y-0 left-0 z-30 flex flex-col border-r border-line/80 bg-surface transition-all duration-200 lg:relative lg:translate-x-0 ${collapsed ? "w-[76px]" : "w-[260px]"} ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>

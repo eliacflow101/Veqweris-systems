@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
+import type { DocumentSnapshot, Transaction } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
+import { requireInstitutionFeatureEntitlement } from "@/lib/platform/tenant-entitlements";
+import { withInstitutionCapacity } from "@/lib/platform/capacity";
 import { buildExternalEvent, eventReferences, externalEventType, hashIntegrationKey, resolveIntegration, verifyIntegrationSignature, type IntegrationCredential, type IntegrationRecord } from "@/lib/integrations";
 
 function exception(code: string, message: string, institutionId: string | null, extra: Record<string, unknown> = {}) {
@@ -33,6 +36,7 @@ export async function POST(request: Request) {
     const scope = type === "hotel.booking.created" ? "hospitality:bookings" : "retail:orders";
     const resolved = resolveIntegration(credential, integration, keyId, scope);
     resolvedInstitutionId = resolved.institutionId;
+    await requireInstitutionFeatureEntitlement(resolved.institutionId, "external-integrations");
     const event = buildExternalEvent({ eventId: externalEventId, integrationId: resolved.integrationId, institutionId: resolved.institutionId, provider: resolved.provider, type, payload: parsed });
     const eventRef = adminDb.collection("externalEvents").doc(event.idempotencyKey);
     const existing = await eventRef.get();
@@ -44,9 +48,9 @@ export async function POST(request: Request) {
     const workflowRef = adminDb.collection("workflows").doc();
     const taskRef = adminDb.collection("tasks").doc();
     const notificationRef = recipientUid ? adminDb.collection("notifications").doc() : null;
-    await adminDb.runTransaction(async (tx) => {
-      const current = await tx.get(eventRef);
-      if (current.exists) return;
+    const writeEvent = (tx: Transaction, currentIntegration: DocumentSnapshot) => {
+      if (!currentIntegration.exists || currentIntegration.get("institutionId") !== resolved.institutionId
+        || currentIntegration.get("status") !== "active") throw new Error("INVALID_INTEGRATION_CREDENTIAL");
       tx.create(eventRef, { ...event, internalEventId: internalEventRef.id, workflowId: workflowRef.id, taskId: taskRef.id, notificationId: notificationRef?.id ?? null, status: "processed", processedAt: FieldValue.serverTimestamp() });
       tx.create(internalEventRef, { eventId: internalEventRef.id, institutionId: resolved.institutionId, type: `integration.${type}`, source: "external-integration", externalEventId: event.eventId, createdAt: FieldValue.serverTimestamp() });
       tx.create(workflowRef, { workflowId: workflowRef.id, institutionId: resolved.institutionId, type: `integration.${type}`, status: "pending", sourceEventId: internalEventRef.id, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
@@ -54,8 +58,32 @@ export async function POST(request: Request) {
       if (notificationRef && recipientUid) tx.create(notificationRef, { notificationId: notificationRef.id, eventId: internalEventRef.id, idempotencyKey: event.idempotencyKey, institutionId: resolved.institutionId, recipientUid, origin: "operational", type: "external_integration", title: references.title, body: references.taskTitle, state: "Created", read: false, archived: false, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
       tx.update(integrationSnapshot.ref, { lastEventAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
       tx.create(adminDb!.collection("auditEvents").doc(), { institutionId: resolved.institutionId, action: "integration.event.processed", actor: "external-integration", eventId: event.eventId, createdAt: FieldValue.serverTimestamp() });
-    });
-    return NextResponse.json({ received: true, duplicate: false, eventId: event.idempotencyKey }, { status: 202 });
+    };
+    let duplicate = false;
+    if (notificationRef) {
+      const result = await withInstitutionCapacity({
+        db: adminDb,
+        institutionId: resolved.institutionId,
+        limit: "maxMonthlyNotifications",
+        amount: 1,
+        idempotencyRef: eventRef,
+        readRefs: [integrationSnapshot.ref],
+        duplicate: (snapshot) => ({ received: true, duplicate: true, eventId: snapshot.id }),
+        write: (transaction, reads) => {
+          writeEvent(transaction, reads[0]);
+          return { duplicate: false };
+        },
+      });
+      duplicate = result.duplicate;
+    } else {
+      duplicate = await adminDb.runTransaction(async (tx) => {
+        const [currentEvent, currentIntegration] = await tx.getAll(eventRef, integrationSnapshot.ref);
+        if (currentEvent.exists) return true;
+        writeEvent(tx, currentIntegration);
+        return false;
+      });
+    }
+    return NextResponse.json({ received: true, duplicate, eventId: event.idempotencyKey }, { status: duplicate ? 200 : 202 });
   } catch (error) {
     const code = error instanceof Error ? error.message : "INTEGRATION_FAILURE";
     const status = code === "INVALID_SIGNATURE" ? 401 : code === "INVALID_INTEGRATION_CREDENTIAL" ? 401 : code === "INTEGRATION_SCOPE_DENIED" || code === "INTEGRATION_SCOPE_MISMATCH" ? 403 : 400;

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
 import { createBreakGlassAccess, transitionFinding, type Finding, type FindingStatus } from "@/lib/governance";
+import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
 
 async function authenticate(request: Request) {
   if (!adminDb) throw new Error("SERVICE_UNAVAILABLE");
@@ -11,7 +12,8 @@ async function authenticate(request: Request) {
   const decoded = await verifyActiveSession(token);
   const snapshot = await adminDb.collection("users").doc(decoded.uid).get();
   const profile = snapshot.data();
-  if (!profile?.institutionId || profile.status === "inactive") throw new Error("FORBIDDEN");
+  if (!profile?.institutionId || profile.status !== "active") throw new Error("FORBIDDEN");
+  await requireInstitutionModuleEntitlement(profile.institutionId, "compliance");
   return { decoded, profile };
 }
 
@@ -25,8 +27,8 @@ export async function GET(request: Request) {
   try {
     const { profile } = await authenticate(request);
     const params = new URL(request.url).searchParams;
-    const findings = await adminDb!.collection("governanceFindings").where("institutionId", "==", profile.institutionId).get();
-    const chains = await adminDb!.collection("governanceChains").where("institutionId", "==", profile.institutionId).get();
+    const findings = await adminDb!.collection("governanceFindings").where("institutionId", "==", profile.institutionId).limit(200).get();
+    const chains = await adminDb!.collection("governanceChains").where("institutionId", "==", profile.institutionId).limit(200).get();
     return NextResponse.json({
       findings: findings.docs.map((doc) => doc.data()).filter((finding) => !params.get("status") || finding.status === params.get("status")),
       chains: chains.docs.map((doc) => doc.data()),
@@ -45,7 +47,14 @@ export async function POST(request: Request) {
       if (!["Owner", "Admin", "Manager"].includes(profile.role)) return NextResponse.json({ error: "Governance finding management is restricted." }, { status: 403 });
       if (body.finding.institutionId !== profile.institutionId) return NextResponse.json({ error: "Institution scope cannot be changed." }, { status: 403 });
       const finding = transitionFinding(body.finding, body.nextStatus);
-      await adminDb!.collection("governanceFindings").doc(finding.findingId).set({ ...finding, updatedBy: decoded.uid }, { merge: true });
+      const findingRef = adminDb!.collection("governanceFindings").doc(finding.findingId);
+      await adminDb!.runTransaction(async (transaction) => {
+        const current = await transaction.get(findingRef);
+        if (current.exists && current.get("institutionId") !== profile.institutionId) {
+          throw new Error("FORBIDDEN");
+        }
+        transaction.set(findingRef, { ...finding, updatedBy: decoded.uid }, { merge: true });
+      });
       return NextResponse.json({ finding });
     }
     if (body.action === "break_glass") {
