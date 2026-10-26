@@ -11,6 +11,7 @@
   --color-ink: 20 31 47;
   --color-muted: 90 105 124;
   --color-accent: 55 103 157;
+  --color-accent-foreground: 255 255 255;
   --color-accent-soft: 231 238 246;
   --color-success: 43 125 88;
   --color-warning: 169 113 28;
@@ -36,6 +37,7 @@
   --color-ink: 226 233 242;
   --color-muted: 143 159 180;
   --color-accent: 103 145 190;
+  --color-accent-foreground: 8 15 27;
   --color-accent-soft: 27 48 74;
   --color-success: 88 169 124;
   --color-warning: 205 153 67;

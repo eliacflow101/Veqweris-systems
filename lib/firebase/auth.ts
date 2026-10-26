@@ -7,8 +7,7 @@ import {
   updateProfile,
   type User,
 } from "firebase/auth";
-import { collection, doc, serverTimestamp, writeBatch } from "firebase/firestore";
-import { auth, db, firebaseConfigured } from "./client";
+import { auth, firebaseConfigured } from "./client";
 import { logSecurityEvent } from "./data";
 import type { SessionPolicy } from "./models";
 
@@ -20,39 +19,35 @@ export async function createAccount(
   country: string,
   sessionPolicy: SessionPolicy = "7_days",
 ) {
-  if (!auth || !db || !firebaseConfigured) throw new Error("Firebase is not configured.");
+  if (!auth || !firebaseConfigured) throw new Error("Firebase is not configured.");
   const credential = await createUserWithEmailAndPassword(auth, email, password);
   await updateProfile(credential.user, { displayName: fullName });
-  const institutionRef = doc(collection(db, "institutions"));
-  const userRef = doc(db, "users", credential.user.uid);
-  const timestamp = serverTimestamp();
-  const batch = writeBatch(db);
-  batch.set(institutionRef, {
-    institutionId: institutionRef.id,
-    createdBy: credential.user.uid,
-    name: institutionName,
-    country,
-    status: "active",
-    planTier: "trial",
-    createdAt: timestamp,
-  });
-  batch.set(userRef, {
-    uid: credential.user.uid,
-    institutionId: institutionRef.id,
-    fullName,
-    email,
-    role: "Owner",
-    departmentId: null,
-    lastActive: timestamp,
-    status: "active",
-    securityStatus: "standard",
-    sessionPolicy,
-    preferences: { theme: "dark", language: "en", timezone: "UTC", dateFormat: "MM/DD/YYYY", timeFormat: "24h", density: "comfortable" },
-    createdAt: timestamp,
-  });
-  await batch.commit();
   await syncSessionCookie(credential.user, sessionPolicy);
-  await logSecurityEvent({ institutionId: institutionRef.id, uid: credential.user.uid, type: "login", source: "create_account" });
+
+  const response = await fetch("/api/organization/provision", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      institutionName,
+      country,
+      fullName,
+      email,
+      institutionType: "general-business",
+      idempotencyKey: `${credential.user.uid}:${Date.now()}:signup`,
+    }),
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(typeof payload.error === "string" ? payload.error : "Institution provisioning failed.");
+  }
+
+  const provisioning = await response.json() as { institutionId?: unknown };
+  if (typeof provisioning.institutionId !== "string" || !provisioning.institutionId) {
+    throw new Error("Institution provisioning returned an invalid response.");
+  }
+  await syncSessionCookie(credential.user, sessionPolicy, true);
+  await logSecurityEvent({ institutionId: provisioning.institutionId, uid: credential.user.uid, type: "login", source: "create_account" });
   return credential.user;
 }
 
@@ -69,12 +64,18 @@ export async function signOut() {
   await fetch("/api/auth/session", { method: "DELETE" });
 }
 
-async function syncSessionCookie(user: User, sessionPolicy: SessionPolicy = "7_days") {
-  const token = await user.getIdToken();
-  const response = await fetch("/api/auth/session", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token, sessionPolicy }),
-  });
-  if (!response.ok) throw new Error("Unable to establish a secure session.");
+async function syncSessionCookie(user: User, sessionPolicy: SessionPolicy = "7_days", forceRefresh = false) {
+  const synchronize = async (token: string) => {
+    const response = await fetch("/api/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, sessionPolicy }),
+    });
+    if (!response.ok) throw new Error("Unable to establish a secure session.");
+    return await response.json() as { refreshRequired?: boolean };
+  };
+  const result = await synchronize(await user.getIdToken(forceRefresh));
+  if (result.refreshRequired) {
+    await synchronize(await user.getIdToken(true));
+  }
 }

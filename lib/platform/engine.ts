@@ -479,11 +479,22 @@ export function updateSecurityState(
 
 export function updatePolicies(
   state: InstitutionPlatformState,
-  policies: Partial<InstitutionPolicies>,
+  policies: unknown,
   actorUid: string,
   now = new Date().toISOString(),
 ): InstitutionPlatformState {
-  return { ...state, policies: { ...state.policies, ...policies }, platformUpdatedAt: now, platformUpdatedBy: actorUid };
+  const allowedKeys = Object.keys(defaultInstitutionPolicies) as (keyof InstitutionPolicies)[];
+  if (!policies || typeof policies !== "object" || Array.isArray(policies)) {
+    throw new Error("POLICY_INVALID");
+  }
+  const updates: Partial<InstitutionPolicies> = {};
+  for (const [key, value] of Object.entries(policies)) {
+    if (!allowedKeys.includes(key as keyof InstitutionPolicies) || typeof value !== "boolean") {
+      throw new Error("POLICY_INVALID");
+    }
+    updates[key as keyof InstitutionPolicies] = value;
+  }
+  return { ...state, policies: { ...state.policies, ...updates }, platformUpdatedAt: now, platformUpdatedBy: actorUid };
 }
 
 /** Billing overrides are bounded by the plan definition instead of hard-coded exceptions. */

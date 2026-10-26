@@ -13,6 +13,7 @@ import {
   validateFeatureSelection, validateModuleSelection,
 } from "../lib/platform";
 import type { PlatformInstitutionSummary, PlatformRole, InstitutionUsageSnapshot } from "../lib/platform";
+import { planFeatureKeys } from "../lib/platform/models";
 
 const now = "2026-03-01T00:00:00.000Z";
 const tenantModules = tenantModuleCatalogue(navigationConfig);
@@ -73,7 +74,7 @@ assert.deepEqual(
   "Professional receives only explicitly declared features",
 );
 const enterpriseAssigned = assignPlan(basicState, "enterprise", "platform-owner", now, context);
-assert.equal(enterpriseAssigned.entitlement.features.length, 6, "Enterprise receives its declared complete feature set");
+assert.equal(enterpriseAssigned.entitlement.features.length, planFeatureKeys.length, "Enterprise receives its declared complete feature set");
 const explicitFeatureGrant = updateEntitlementOverrides(
   basicState.entitlement, { features: ["priority-support", "unknown-feature" as never] },
   "platform-owner", now, context,
@@ -99,7 +100,7 @@ assert.equal(internalAssigned.billingState.status, "not_applicable");
 assert.equal(internalAssigned.subscription.migratedFrom, "basic", "plan migrations are recorded");
 assert.equal(internalAssigned.subscription.renewalPolicy, "none");
 assert.ok(internalAssigned.entitlement.modules.includes("analytics"), "Internal unlocks every module");
-assert.equal(internalAssigned.entitlement.features.length, 6, "Internal unlocks every premium feature");
+assert.equal(internalAssigned.entitlement.features.length, planFeatureKeys.length, "Internal unlocks every registered feature");
 
 const partnerAssigned = assignPlan(internalAssigned, "partner", "platform-owner", now, context);
 assert.equal(partnerAssigned.subscription.billingEnabled, false);
@@ -188,6 +189,8 @@ assert.throws(() => updateSecurityState(basicState, "restricted", "   ", "platfo
 const policied = updatePolicies(basicState, { allowNetworkParticipation: true }, "platform-admin", now);
 assert.equal(policied.policies.allowNetworkParticipation, true);
 assert.equal(policied.policies.requireSensitiveReauth, true, "unset policies keep secure defaults");
+assert.throws(() => updatePolicies(basicState, { supportAccessEnabled: "false" }, "platform-admin", now), /POLICY_INVALID/);
+assert.throws(() => updatePolicies(basicState, { unexpectedPolicy: true }, "platform-admin", now), /POLICY_INVALID/);
 
 /* ------------------------- monitoring and health honesty ---------------------- */
 

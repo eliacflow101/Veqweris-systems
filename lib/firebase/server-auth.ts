@@ -37,9 +37,9 @@ export async function verifyActiveSession(token: string): Promise<DecodedIdToken
     throw new Error("Session has been revoked.");
   }
   const expiresAt = sessionData.expiresAt;
-  if (expiresAt instanceof Timestamp && expiresAt.toMillis() <= Date.now()) {
+  if (!(expiresAt instanceof Timestamp) || expiresAt.toMillis() <= Date.now()) {
     await session.ref.update({ status: "expired", updatedAt: FieldValue.serverTimestamp() });
-    throw new Error("Session has expired.");
+    throw new Error(expiresAt instanceof Timestamp ? "Session has expired." : "Session expiry is invalid.");
   }
   const profile = await adminDb.collection("users").doc(decoded.uid).get();
   if (profile.exists && profile.get("status") !== "active") {

@@ -63,7 +63,8 @@ export async function POST(request: Request) {
       }
       const billData = currentBill.data();
       if (!currentBill.exists || !billData || billData.institutionId !== currentData.institutionId
-        || billData.status === "PAID" || billData.status === "CANCELLED") {
+        || billData.status === "PAID" || billData.status === "CANCELLED"
+        || (billData.activePaymentId && billData.activePaymentId !== currentData.paymentId)) {
         throw new Error("Bill context changed during payment verification.");
       }
       let verificationPayment = { ...currentData, status: currentData.status } as Parameters<typeof transitionPayment>[0];
@@ -81,7 +82,7 @@ export async function POST(request: Request) {
         updatedAt: FieldValue.serverTimestamp(),
         verifiedAt: FieldValue.serverTimestamp(),
       });
-      transaction.update(billRef, { status: "PAID", updatedAt: FieldValue.serverTimestamp() });
+      transaction.update(billRef, { status: "PAID", activePaymentId: null, updatedAt: FieldValue.serverTimestamp() });
       const receiptRef = db.collection("receipts").doc();
       transaction.create(receiptRef, {
         receiptId: receiptRef.id,

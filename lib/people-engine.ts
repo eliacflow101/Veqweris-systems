@@ -21,6 +21,26 @@ const IMPORT_FIELD_ALIASES: Record<string, string[]> = {
   status: ["status", "employee status", "account status"],
 };
 
+export function canonicalImportField(header: string) {
+  const normalized = header.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  return Object.entries(IMPORT_FIELD_ALIASES).find(([, aliases]) =>
+    aliases.some((alias) => alias.toLowerCase().replace(/[^a-z0-9]/g, "") === normalized),
+  )?.[0];
+}
+
+export function normalizeImportHeaders(headers: string[], maxColumns: number) {
+  if (headers.length === 0 || headers.length > maxColumns) throw new Error("Invalid import headers.");
+  const normalized = headers.map((header) => header.trim());
+  const unique = new Set(normalized.map((header) => header.toLowerCase()));
+  const canonical = normalized.map(canonicalImportField).filter(Boolean);
+  if (normalized.some((header) => !header)
+    || unique.size !== normalized.length
+    || new Set(canonical).size !== canonical.length) {
+    throw new Error("Invalid import headers.");
+  }
+  return normalized;
+}
+
 export function normalizeImportCell(value: unknown) {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value.trim();

@@ -25,13 +25,14 @@ export type PlatformCapability =
   | "billing.manage"
   | "network.trust.manage"
   | "monitoring.view"
+  | "monitoring.manage"
   | "support.grant"
   | "audit.view"
   | "operators.manage";
 
 export const platformCapabilities: PlatformCapability[] = [
   "institutions.view", "institutions.manage", "plans.assign", "plans.manage", "relationships.assign",
-  "features.manage", "billing.manage", "network.trust.manage", "monitoring.view", "support.grant",
+  "features.manage", "billing.manage", "network.trust.manage", "monitoring.view", "monitoring.manage", "support.grant",
   "audit.view", "operators.manage",
 ];
 
@@ -96,6 +97,7 @@ export const planFeatureKeys = [
   "data-export",
   "multi-vertical",
   "priority-support",
+  "white-label-footer",
 ] as const;
 export type PlanFeature = (typeof planFeatureKeys)[number];
 

@@ -32,13 +32,16 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "recharts": "^2.15.4",
-    "server-only": "^0.0.1"
+    "saxes": "6.0.0",
+    "server-only": "^0.0.1",
+    "yauzl": "3.4.0"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.2",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
+    "@types/yauzl": "3.4.0",
     "autoprefixer": "^10.4.20",
     "firebase-tools": "^15.30.2",
     "postcss": "^8.4.49",

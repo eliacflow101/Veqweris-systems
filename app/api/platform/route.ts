@@ -21,6 +21,7 @@ import type {
   InstitutionUsageSnapshot, MonitoringSignal, PlatformAuditEvent, PlatformOperator,
   SupportAccessGrant, SupportScope,
 } from "@/lib/platform";
+import { monitoringDomains } from "@/lib/platform/models";
 
 const PLATFORM_AUDIT_SCOPE = "platform";
 const tenantModules = tenantModuleCatalogue(navigationConfig);
@@ -50,6 +51,7 @@ function failure(error: unknown) {
   if (code === "PLAN_MIGRATION_NOT_ALLOWED") return NextResponse.json({ error: "The managed plan catalog does not allow this migration." }, { status: 409 });
   if (code === "PLAN_CATALOG_CHANGED") return NextResponse.json({ error: "The managed plan catalog changed; reload and retry." }, { status: 409 });
   if (code === "PLAN_INACTIVE") return NextResponse.json({ error: "Only active catalog plans may be assigned." }, { status: 400 });
+  if (code === "MONITORING_SIGNAL_LIMIT") return NextResponse.json({ error: "The institution has reached its daily monitoring-entry limit." }, { status: 429 });
   console.error("Platform administration request failed.", error);
   return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to process platform request." }, { status: 400 });
 }
@@ -631,23 +633,40 @@ export async function POST(request: Request) {
     }
 
     if (action === "record_signal") {
-      requirePlatformCapability(operator.platformRole, "monitoring.view");
+      requirePlatformCapability(operator.platformRole, "monitoring.manage");
       const domain = typeof body.domain === "string" ? body.domain : "";
       const metric = typeof body.metric === "string" ? body.metric.trim() : "";
-      const value = Number(body.value);
-      if (!domain || !metric || !Number.isFinite(value)) {
-        return NextResponse.json({ error: "domain, metric and a numeric value are required." }, { status: 400 });
+      const value = typeof body.value === "number" ? body.value : Number.NaN;
+      const unit = typeof body.unit === "string" ? body.unit.trim() : "count";
+      const note = typeof body.note === "string" ? body.note.trim() : "";
+      if (!(monitoringDomains as readonly string[]).includes(domain)
+        || !metric || metric.length > 100 || !Number.isFinite(value) || Math.abs(value) > 1_000_000_000_000
+        || !unit || unit.length > 32 || note.length > 500) {
+        return NextResponse.json({ error: "A valid monitoring domain, metric, value, unit and note are required." }, { status: 400 });
       }
       await loadInstitutionDocument(institutionId);
-      const signalId = `sig_${domain}_${institutionId}_${Date.now()}`;
+      const signalRef = adminDb!.collection("platformMonitoringSignals").doc();
+      const signalId = signalRef.id;
+      const occurredAt = new Date();
+      const quotaRef = adminDb!.collection("platformMonitoringSignalLimits").doc(institutionId);
+      const day = occurredAt.toISOString().slice(0, 10);
       const signal: MonitoringSignal = {
         signalId, institutionId, domain: domain as MonitoringSignal["domain"], metric, value,
-        unit: typeof body.unit === "string" ? body.unit : "count",
-        source: "operator-entry", note: typeof body.note === "string" ? body.note : "",
-        capturedAt: new Date().toISOString(), recordedBy: operator.uid,
+        unit, source: "operator-entry", note,
+        capturedAt: occurredAt.toISOString(), recordedBy: operator.uid,
       };
-      await adminDb!.collection("platformMonitoringSignals").doc(signalId).set({ ...signal, createdAt: FieldValue.serverTimestamp() });
-      await audit(actor, "monitoring.signal_recorded", institutionId, { signalId, domain, metric, value }, "monitoringSignal", signalId);
+      await audit(actor, "monitoring.signal_recorded", institutionId, { signalId, domain, metric, value }, "monitoringSignal", signalId, undefined, async (transaction) => {
+        const quota = await transaction.get(quotaRef);
+        const count = quota.get("day") === day ? Number(quota.get("count") ?? 0) : 0;
+        if (count >= 500) throw new Error("MONITORING_SIGNAL_LIMIT");
+        transaction.create(signalRef, { ...signal, createdAt: FieldValue.serverTimestamp() });
+        transaction.set(quotaRef, {
+          institutionId,
+          day,
+          count: count + 1,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      });
       return NextResponse.json({ signal }, { status: 201 });
     }
 

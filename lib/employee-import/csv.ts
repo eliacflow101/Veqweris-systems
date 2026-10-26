@@ -1,16 +1,22 @@
 import { parse } from "csv-parse/sync";
+import { EmployeeImportError } from "./errors";
+import { normalizeImportHeaders } from "@/lib/people-engine";
 
 export const MAX_EMPLOYEE_IMPORT_BYTES = 5 * 1024 * 1024;
 export const MAX_EMPLOYEE_IMPORT_ROWS = 1_000;
+export const MAX_EMPLOYEE_IMPORT_PREVIEW_BYTES = 700 * 1024;
 const MAX_CSV_RECORD_SIZE = 64 * 1024;
-const MAX_CSV_COLUMNS = 64;
+export const MAX_EMPLOYEE_IMPORT_COLUMNS = 64;
 
 export type EmployeeImportCsvErrorCode = "empty" | "too-large" | "too-many-rows" | "invalid";
 
-export class EmployeeImportCsvError extends Error {
-  constructor(readonly code: EmployeeImportCsvErrorCode) {
+export class EmployeeImportCsvError extends EmployeeImportError {
+  declare readonly code: EmployeeImportCsvErrorCode;
+
+  constructor(code: EmployeeImportCsvErrorCode) {
     super(code);
     this.name = "EmployeeImportCsvError";
+    this.code = code;
   }
 }
 
@@ -34,15 +40,11 @@ export function parseEmployeeImportCsv(bytes: Uint8Array): Record<string, string
     rows = parse(input, {
       bom: true,
       columns(headers: string[]) {
-        if (headers.length === 0 || headers.length > MAX_CSV_COLUMNS) {
+        try {
+          return normalizeImportHeaders(headers, MAX_EMPLOYEE_IMPORT_COLUMNS);
+        } catch {
           throw new EmployeeImportCsvError("invalid");
         }
-        const normalized = headers.map((header) => header.trim());
-        const uniqueHeaders = new Set(normalized.map((header) => header.toLowerCase()));
-        if (normalized.some((header) => !header) || uniqueHeaders.size !== normalized.length) {
-          throw new EmployeeImportCsvError("invalid");
-        }
-        return normalized;
       },
       max_record_size: MAX_CSV_RECORD_SIZE,
       relax_column_count: false,

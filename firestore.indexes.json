@@ -32,6 +32,14 @@
         { "fieldPath": "institutionId", "order": "ASCENDING" },
         { "fieldPath": "capturedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "memberships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "institutionId", "order": "ASCENDING" },
+        { "fieldPath": "roleIds", "arrayConfig": "CONTAINS" }
+      ]
     }
   ],
   "fieldOverrides": []

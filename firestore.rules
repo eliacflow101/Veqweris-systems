@@ -1,22 +1,53 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
+    function authenticated() {
       return request.auth != null;
+    }
+
+    function signedIn() {
+      let membershipPath = /databases/$(database)/documents/memberships/$(request.auth.uid);
+      return authenticated()
+        && request.auth.token.pt == "staff"
+        && request.auth.token.tier in ["Owner", "Admin", "Manager", "Employee"]
+        && request.auth.token.iid is string
+        && request.auth.token.pv is int
+        && exists(membershipPath)
+        && get(membershipPath).data.institutionId == request.auth.token.iid
+        && get(membershipPath).data.tier == request.auth.token.tier
+        && get(membershipPath).data.permissionVersion == request.auth.token.pv
+        && get(membershipPath).data.status == "active";
     }
 
     function userDoc(uid) {
       return get(/databases/$(database)/documents/users/$(uid));
     }
 
+    function membershipDoc(uid) {
+      return get(/databases/$(database)/documents/memberships/$(uid));
+    }
+
+    function hasPermission(permission) {
+      let permissionsPath = /databases/$(database)/documents/effectivePermissions/$(request.auth.uid);
+      return authenticated()
+        && request.auth.token.pt == "staff"
+        && exists(permissionsPath)
+        && get(permissionsPath).data.institutionId == request.auth.token.iid
+        && get(permissionsPath).data.version == request.auth.token.pv
+        && permission in get(permissionsPath).data.permissionKeys;
+    }
+
     function sameInstitution(institutionId) {
       return signedIn()
-        && userDoc(request.auth.uid).data.institutionId == institutionId
+        && request.auth.token.iid == institutionId
         && get(/databases/$(database)/documents/institutions/$(institutionId)).data.status == "active";
     }
 
     function hasRole(role) {
-      return signedIn() && userDoc(request.auth.uid).data.role == role;
+      return signedIn()
+        && (request.auth.token.tier == role
+          || (!(role in ["Owner", "Admin", "Manager", "Employee"])
+            && request.auth.token.legacyRole == role));
     }
 
     function ownerOrAdmin() {
@@ -37,10 +68,7 @@ service cloud.firestore {
     }
 
     function institutionHasModule(moduleId) {
-      let uid = request.auth.uid;
-      let userPath = /databases/$(database)/documents/users/$(uid);
-      return signedIn() && exists(userPath)
-        && institutionHasModuleFor(userDoc(uid).data.institutionId, moduleId);
+      return signedIn() && institutionHasModuleFor(request.auth.token.iid, moduleId);
     }
 
     function institutionHasModuleFor(institutionId, moduleId) {
@@ -62,10 +90,7 @@ service cloud.firestore {
     }
 
     function institutionHasFeature(featureId) {
-      let uid = request.auth.uid;
-      let userPath = /databases/$(database)/documents/users/$(uid);
-      return signedIn() && exists(userPath)
-        && institutionHasFeatureFor(userDoc(uid).data.institutionId, featureId);
+      return signedIn() && institutionHasFeatureFor(request.auth.token.iid, featureId);
     }
 
     function institutionHasFeatureFor(institutionId, featureId) {
@@ -95,49 +120,56 @@ service cloud.firestore {
 
     function managerOfDepartment(departmentId) {
       return hasRole("Manager")
-        && userDoc(request.auth.uid).data.departmentId == departmentId;
+        && exists(/databases/$(database)/documents/memberships/$(request.auth.uid))
+        && departmentId in membershipDoc(request.auth.uid).data.departmentIds;
     }
 
     function healthcareRole() {
-      return institutionHasModule("healthcare")
-        && (ownerOrAdmin() || hasRole("Manager") || hasRole("Clinician") || hasRole("Nurse")
-          || hasRole("Reception") || hasRole("Billing") || hasRole("Laboratory") || hasRole("Pharmacist"));
+      return institutionHasModuleFor(request.auth.token.iid, "healthcare")
+        && (request.auth.token.tier in ["Owner", "Admin", "Manager"]
+          || request.auth.token.legacyRole in ["Clinician", "Nurse", "Reception", "Billing", "Laboratory", "Pharmacist"]);
     }
 
     function healthcareSensitiveAccess() {
-      return ownerOrAdmin()
-        || ("healthcarePermissions" in userDoc(request.auth.uid).data
-          && "sensitive" in userDoc(request.auth.uid).data.healthcarePermissions)
-        || ("healthcarePermissions" in userDoc(request.auth.uid).data
-          && "highly_sensitive" in userDoc(request.auth.uid).data.healthcarePermissions);
+      let profile = userDoc(request.auth.uid).data;
+      return request.auth.token.tier in ["Owner", "Admin"]
+        || hasPermission("health.record.read")
+        || ("healthcarePermissions" in profile
+          && "sensitive" in profile.healthcarePermissions)
+        || ("healthcarePermissions" in profile
+          && "highly_sensitive" in profile.healthcarePermissions);
     }
 
     function healthcareRecordScope(record) {
+      let profile = userDoc(request.auth.uid).data;
+      let tier = request.auth.token.tier;
+      let role = request.auth.token.legacyRole;
       return sameInstitution(record.institutionId)
         && healthcareRole()
         && (record.sensitivity == "standard" || healthcareSensitiveAccess())
         && (!("departmentId" in record)
           || record.departmentId == null
-          || ownerOrAdmin()
-          || (hasRole("Manager") && userDoc(request.auth.uid).data.departmentId == record.departmentId)
-          || (hasRole("Clinician") || hasRole("Nurse"))
-          || hasRole("Reception") || hasRole("Billing") || hasRole("Laboratory") || hasRole("Pharmacist"));
+          || tier in ["Owner", "Admin"]
+          || (tier == "Manager" && profile.departmentId == record.departmentId)
+          || role in ["Clinician", "Nurse", "Reception", "Billing", "Laboratory", "Pharmacist"]);
     }
 
     function assignedPatient(record) {
+      let profile = userDoc(request.auth.uid).data;
       return !("patientId" in record)
-        || !(hasRole("Clinician") || hasRole("Nurse"))
-        || ("assignedPatientIds" in userDoc(request.auth.uid).data
-          && record.patientId in userDoc(request.auth.uid).data.assignedPatientIds);
+        || !(request.auth.token.legacyRole in ["Clinician", "Nurse"])
+        || ("assignedPatientIds" in profile
+          && record.patientId in profile.assignedPatientIds);
     }
 
     function specialtyScope(record) {
+      let profile = userDoc(request.auth.uid).data;
       return !("specialtyId" in record) || record.specialtyId == null
-        || ownerOrAdmin()
-        || (("specialtyId" in userDoc(request.auth.uid).data)
-          && userDoc(request.auth.uid).data.specialtyId == record.specialtyId)
-        || (("specialtyIds" in userDoc(request.auth.uid).data)
-          && record.specialtyId in userDoc(request.auth.uid).data.specialtyIds);
+        || request.auth.token.tier in ["Owner", "Admin"]
+        || (("specialtyId" in profile)
+          && profile.specialtyId == record.specialtyId)
+        || (("specialtyIds" in profile)
+          && record.specialtyId in profile.specialtyIds);
     }
 
     match /operationalIntelligence/{recordId} {
@@ -148,7 +180,7 @@ service cloud.firestore {
     }
 
     match /institutions/{institutionId} {
-      allow create: if signedIn()
+      allow create: if authenticated()
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.institutionId == institutionId
         && request.resource.data.status == "active"
@@ -189,7 +221,7 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow create: if signedIn()
+      allow create: if authenticated()
         && uid == request.auth.uid
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.role == "Owner"
@@ -205,11 +237,61 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             "fullName", "email", "phone", "photoUrl", "preferences", "lastActive", "sessionPolicy"
           ]))
-        || (ownerOrAdmin() && sameInstitution(resource.data.institutionId) && institutionHasModule("employees")
+        || (ownerOrAdmin() && resource.data.role != "Owner"
+          && sameInstitution(resource.data.institutionId) && institutionHasModule("employees")
           && request.resource.data.uid == resource.data.uid
-          && request.resource.data.institutionId == resource.data.institutionId)
+          && request.resource.data.institutionId == resource.data.institutionId
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "fullName", "phone", "photoUrl", "departmentId", "lastActive"
+          ]))
       );
       allow delete: if false;
+    }
+
+    match /memberships/{uid} {
+      allow read: if signedIn() && uid == request.auth.uid
+        && resource.data.institutionId == request.auth.token.iid;
+      allow create, update, delete: if false;
+    }
+
+    match /effectivePermissions/{uid} {
+      allow read: if signedIn() && uid == request.auth.uid
+        && resource.data.institutionId == request.auth.token.iid
+        && resource.data.version == request.auth.token.pv;
+      allow create, update, delete: if false;
+    }
+
+    match /roles/{roleId} {
+      allow read, write: if false;
+    }
+
+    match /roleVersions/{versionId} {
+      allow read, write: if false;
+    }
+
+    match /permissionSets/{permissionSetId} {
+      allow read, write: if false;
+    }
+
+    match /portalAccounts/{uid} {
+      allow read: if authenticated() && request.auth.token.pt == "external"
+        && uid == request.auth.uid
+        && resource.data.status == "active"
+        && request.auth.token.iid == resource.data.institutionId;
+      allow create, update, delete: if false;
+    }
+
+    match /locations/{locationId} {
+      allow read, write: if false;
+    }
+
+    match /operationalUnits/{unitId} {
+      allow read, write: if false;
+    }
+
+    match /teams/{teamId} {
+      allow read, write: if false;
     }
 
     match /departments/{departmentId} {
@@ -239,8 +321,9 @@ service cloud.firestore {
     function hasSchoolPermission(permission) {
       return signedIn()
         && institutionHasModule("school")
-        && userDoc(request.auth.uid).data.schoolPermissions != null
-        && permission in userDoc(request.auth.uid).data.schoolPermissions;
+        && (hasPermission(permission)
+          || (userDoc(request.auth.uid).data.schoolPermissions != null
+            && permission in userDoc(request.auth.uid).data.schoolPermissions));
     }
 
     match /schoolProfiles/{profileId} {
@@ -430,9 +513,11 @@ service cloud.firestore {
 
     match /clinicalRecords/{clinicalRecordId} {
       allow read: if healthcareRecordScope(resource.data) && assignedPatient(resource.data) && specialtyScope(resource.data)
-        && (ownerOrAdmin() || hasRole("Clinician") || hasRole("Nurse"));
+        && (request.auth.token.tier in ["Owner", "Admin"]
+          || request.auth.token.legacyRole in ["Clinician", "Nurse"]);
       allow create, update: if healthcareRecordScope(request.resource.data) && assignedPatient(request.resource.data) && specialtyScope(request.resource.data)
-        && (hasRole("Clinician") || hasRole("Nurse") || ownerOrAdmin());
+        && (request.auth.token.legacyRole in ["Clinician", "Nurse"]
+          || request.auth.token.tier in ["Owner", "Admin"]);
       allow delete: if false;
     }
 
@@ -507,8 +592,8 @@ service cloud.firestore {
     }
 
     match /tasks/{taskId} {
-      allow read: if sameInstitution(resource.data.institutionId);
-      allow create: if signedIn()
+      allow read: if sameInstitution(resource.data.institutionId) && institutionHasModule("tasks");
+      allow create: if signedIn() && institutionHasModule("tasks")
         && request.resource.data.taskId == taskId
         && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
         && request.resource.data.status in ["todo", "in_progress", "review", "done"]
@@ -520,7 +605,7 @@ service cloud.firestore {
             && request.resource.data.departmentId == userDoc(request.auth.uid).data.departmentId
           )
         );
-      allow update: if sameInstitution(resource.data.institutionId)
+      allow update: if sameInstitution(resource.data.institutionId) && institutionHasModule("tasks")
         && request.resource.data.taskId == resource.data.taskId
         && request.resource.data.institutionId == resource.data.institutionId
         && (
@@ -538,7 +623,8 @@ service cloud.firestore {
           )
         );
       allow delete: if ownerOrAdmin()
-        && sameInstitution(resource.data.institutionId);
+        && sameInstitution(resource.data.institutionId)
+        && institutionHasModule("tasks");
     }
 
     match /plannerEvents/{eventId} {
@@ -730,11 +816,21 @@ service cloud.firestore {
       }
 
       match /securityEvents/{eventId} {
-        // Security events are institution-scoped; creators must be signed-in and match institution
+        // Client-created events are limited to self-attributed authentication and workspace activity.
         allow create: if signedIn()
           && request.resource.data.eventId == eventId
+          && request.resource.data.institutionId == institutionId
           && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
-          && request.resource.data.type in ["login","logout","failed_login","password_change","recovery_request","recovery_completion","workspace_lock","workspace_unlock","sensitive_action","role_change","account_deactivation","account_reactivation","session_revocation"];
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(["eventId", "institutionId", "uid", "type", "source", "details", "createdAt"])
+          && request.resource.data.type in ["login", "workspace_lock", "workspace_unlock"]
+          && request.resource.data.source in ["create_account", "login_form", "workspace_lock", "workspace_unlock", "idle_timer"]
+          && request.resource.data.details is map
+          && (
+            (request.resource.data.type == "login" && request.resource.data.source in ["create_account", "login_form"])
+            || (request.resource.data.type == "workspace_lock" && request.resource.data.source in ["workspace_lock", "idle_timer"])
+            || (request.resource.data.type == "workspace_unlock" && request.resource.data.source in ["workspace_lock", "workspace_unlock"])
+          );
 
         allow read: if signedIn() && sameInstitution(resource.data.institutionId) && (
           ownerOrAdmin() || request.auth.uid == resource.data.uid
@@ -862,15 +958,7 @@ service cloud.firestore {
     match /bills/{billId} {
         allow read: if signedIn() && sameInstitution(resource.data.institutionId)
           && (ownerOrAdmin() || request.auth.uid == resource.data.customerUid);
-        allow create: if signedIn()
-          && request.resource.data.billId == billId
-          && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
-          && request.resource.data.total is number
-          && request.resource.data.currency is string;
-        allow update: if signedIn() && sameInstitution(resource.data.institutionId) && ownerOrAdmin()
-          && request.resource.data.billId == resource.data.billId
-          && request.resource.data.institutionId == resource.data.institutionId;
-        allow delete: if false;
+        allow create, update, delete: if false;
       }
 
     match /payments/{paymentId} {
@@ -890,11 +978,7 @@ service cloud.firestore {
     match /refunds/{refundId} {
         allow read: if signedIn() && sameInstitution(resource.data.institutionId)
           && (ownerOrAdmin() || request.auth.uid == resource.data.requestedBy);
-        allow create: if signedIn()
-          && request.resource.data.refundId == refundId
-          && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
-          && ownerOrAdmin();
-        allow update, delete: if false;
+        allow create, update, delete: if false;
       }
 
     match /receipts/{receiptId} {
@@ -987,6 +1071,22 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /institutionSettings/{institutionId} {
+      allow read, write: if false;
+
+      match /sections/{sectionId} {
+        allow read, write: if false;
+
+        match /drafts/{draftId} {
+          allow read, write: if false;
+        }
+      }
+    }
+
+    match /settingsAuditEvents/{eventId} {
+      allow read, write: if false;
+    }
+
     // Notifications are tenant-scoped and recipients may only mutate their own inbox.
     match /notifications/{notificationId} {
       allow read: if signedIn()
@@ -1022,6 +1122,24 @@ service cloud.firestore {
       allow read: if signedIn() && resource.data.institutionId != null
         && sameInstitution(resource.data.institutionId) && ownerOrAdmin();
       allow write: if false;
+    }
+    match /securityEvents/{eventId} {
+      allow create: if signedIn()
+        && request.resource.data.eventId == eventId
+        && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(["eventId", "institutionId", "uid", "type", "source", "details", "createdAt"])
+        && request.resource.data.type in ["login", "workspace_lock", "workspace_unlock"]
+        && request.resource.data.source in ["create_account", "login_form", "workspace_lock", "workspace_unlock", "idle_timer"]
+        && request.resource.data.details is map
+        && (
+          (request.resource.data.type == "login" && request.resource.data.source in ["create_account", "login_form"])
+          || (request.resource.data.type == "workspace_lock" && request.resource.data.source in ["workspace_lock", "idle_timer"])
+          || (request.resource.data.type == "workspace_unlock" && request.resource.data.source in ["workspace_lock", "workspace_unlock"])
+        );
+      allow read: if signedIn() && sameInstitution(resource.data.institutionId)
+        && (ownerOrAdmin() || request.auth.uid == resource.data.uid);
+      allow update, delete: if false;
     }
     match /auditEvents/{eventId} {
       allow read: if signedIn() && sameInstitution(resource.data.institutionId);
