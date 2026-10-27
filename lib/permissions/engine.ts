@@ -26,11 +26,20 @@ export type CustomRoleAuthorization = {
 };
 export type EffectivePermission = PermissionGrant & { module: string; sensitivity: SensitivityClass; dangerous: boolean };
 
+const SECURITY_EXPLICIT_PERMISSIONS = new Set([
+  "security.center.read",
+  "security.incident.manage",
+  "security.incident.contain",
+]);
+
 const BASE_TIER_PERMISSIONS: Record<SystemTier, string[]> = {
-  Employee: ["dashboard.summary.read", "departments.read", "employees.read", "tasks.read", "inventory.stock.read"],
-  Manager: ["dashboard.summary.read", "departments.read", "employees.read", "tasks.read", "tasks.manage", "inventory.stock.read", "inventory.stock.adjust", "organization.teams.manage"],
-  Admin: Object.keys(PERMISSION_REGISTRY).filter((key) => !["health.record.read", "school.safeguarding.read"].includes(key)),
-  Owner: Object.keys(PERMISSION_REGISTRY),
+  Employee: ["dashboard.summary.read", "departments.read", "employees.read", "tasks.read", "inventory.stock.read", "documents.read"],
+  Manager: ["dashboard.summary.read", "departments.read", "employees.read", "tasks.read", "tasks.manage", "inventory.stock.read", "inventory.stock.adjust", "organization.teams.manage", "documents.read"],
+  Admin: Object.keys(PERMISSION_REGISTRY).filter((key) =>
+    !["health.record.read", "health.record.write", "school.safeguarding.read"].includes(key)
+    && !SECURITY_EXPLICIT_PERMISSIONS.has(key)),
+  Owner: Object.keys(PERMISSION_REGISTRY).filter((key) =>
+    key !== "health.record.write" && !SECURITY_EXPLICIT_PERMISSIONS.has(key)),
 };
 
 const DIMENSIONS = [

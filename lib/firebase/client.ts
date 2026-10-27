@@ -1,6 +1,6 @@
 import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { connectFirestoreEmulator, getFirestore, type Firestore } from "@firebase/firestore";
-import { getAuth, type Auth } from "firebase/auth";
+import { connectAuthEmulator, getAuth, type Auth } from "firebase/auth";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -37,4 +37,8 @@ export const useFirebaseEmulator =
 
 if (db && useFirebaseEmulator && typeof window !== "undefined") {
   connectFirestoreEmulator(db, "127.0.0.1", 8080);
+}
+
+if (auth && useFirebaseEmulator && typeof window !== "undefined") {
+  connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
 }

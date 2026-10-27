@@ -8,6 +8,7 @@ import {
   permissionScopeAllows,
   type CustomRoleAuthorization,
 } from "../lib/permissions/engine";
+import { transitionSecurityIncident } from "../lib/security-center/engine";
 
 describe("permission resolution", () => {
   it("denies unregistered permissions, inactive membership, and expired access", () => {
@@ -22,8 +23,69 @@ describe("permission resolution", () => {
   it("applies tier floors and does not grant restricted health access by default", () => {
     const employee = defaultMembership({ institutionId: "institution-a", tier: "Employee" });
     const manager = defaultMembership({ institutionId: "institution-a", tier: "Manager" });
+    const admin = defaultMembership({ institutionId: "institution-a", tier: "Admin" });
+    const owner = defaultMembership({ institutionId: "institution-a", tier: "Owner" });
     assert.equal(compileEffectivePermissions(employee, []).some((grant) => grant.key === "finance.payment.refund"), false);
     assert.equal(compileEffectivePermissions(manager, []).some((grant) => grant.key === "health.record.read"), false);
+    for (const membership of [employee, manager, admin, owner]) {
+      assert.equal(compileEffectivePermissions(membership, []).some((grant) => grant.key === "health.record.write"), false);
+    }
+    for (const membership of [admin, owner]) {
+      assert.equal(compileEffectivePermissions(membership, []).some((grant) => grant.key === "security.center.read"), false);
+      assert.equal(compileEffectivePermissions(membership, []).some((grant) => grant.key === "security.incident.manage"), false);
+      assert.equal(compileEffectivePermissions(membership, []).some((grant) => grant.key === "security.incident.contain"), false);
+    }
+  });
+
+  it("grants Security Center capabilities only through an explicit institution role", () => {
+    const membership = {
+      ...defaultMembership({ institutionId: "institution-a", tier: "Admin" }),
+      roleIds: ["security-reviewer"],
+    };
+    const role: CustomRoleAuthorization = {
+      roleId: "security-reviewer",
+      institutionId: "institution-a",
+      tierCeiling: "Admin",
+      status: "active",
+      version: 1,
+      permissions: [
+        { key: "security.center.read" },
+        { key: "security.incident.manage" },
+        { key: "security.incident.contain" },
+      ],
+    };
+    const grants = compileEffectivePermissions(membership, [role]);
+    assert.ok(grants.some((grant) => grant.key === "security.center.read"));
+    assert.ok(grants.some((grant) => grant.key === "security.incident.manage"));
+    assert.ok(grants.some((grant) => grant.key === "security.incident.contain"));
+  });
+
+  it("enforces incident lifecycle transitions and reasoned reopening", () => {
+    assert.equal(transitionSecurityIncident("draft", "OPEN", "Reviewed evidence."), "OPEN");
+    assert.throws(() => transitionSecurityIncident("draft", "CLOSED", "Reviewed evidence."), /Invalid incident transition/);
+    assert.throws(() => transitionSecurityIncident("RESOLVED", "TRIAGED", "short"), /requires a reason/);
+    assert.equal(transitionSecurityIncident("CLOSED", "TRIAGED", "New evidence reviewed."), "TRIAGED");
+  });
+
+  it("compiles health record write only when explicitly granted by a role", () => {
+    const membership = {
+      ...defaultMembership({ institutionId: "institution-a", tier: "Employee" }),
+      roleIds: ["clinical-writer"],
+    };
+    const role: CustomRoleAuthorization = {
+      roleId: "clinical-writer",
+      institutionId: "institution-a",
+      tierCeiling: "Employee",
+      status: "active",
+      version: 1,
+      permissions: [{
+        key: "health.record.write",
+        scope: { institutionId: "institution-a" },
+      }],
+    };
+    const grants = compileEffectivePermissions(membership, [role]);
+    assert.ok(grants.some((grant) => grant.key === "health.record.write"));
+    assert.equal(grants.some((grant) => grant.key === "health.record.read"), false);
   });
 
   it("intersects custom role scope with membership scope", () => {

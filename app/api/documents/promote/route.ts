@@ -1,17 +1,8 @@
 import { NextResponse } from "next/server";
 import { adminDb, adminStorage } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
-import { cookies } from "next/headers";
-import { verifyActiveSession } from "@/lib/firebase/server-auth";
-import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
-
-async function getSessionToken(req: Request) {
-  const authHeader = req.headers.get("authorization") || "";
-  const tokenFromHeader = authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
-  if (tokenFromHeader) return tokenFromHeader;
-  const cookieStore = await cookies();
-  return cookieStore.get("__session")?.value ?? null;
-}
+import { PermissionAuthorizationError, requirePermission } from "@/lib/permissions/server";
+import { canReadDocument } from "@/lib/documents/access";
 
 export async function POST(req: Request) {
   try {
@@ -19,25 +10,21 @@ export async function POST(req: Request) {
     const { documentId } = body;
     if (!documentId) return NextResponse.json({ error: "documentId required" }, { status: 400 });
 
-    const token = await getSessionToken(req);
-    if (!token) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    const decoded = await verifyActiveSession(token);
-    const uid = decoded.uid;
-
-    const userSnap = await adminDb!.collection("users").doc(uid).get();
-    if (!userSnap.exists) return NextResponse.json({ error: "User not found" }, { status: 403 });
-    const user = userSnap.data()!;
-    if (!user.institutionId) return NextResponse.json({ error: "Institution profile required" }, { status: 403 });
-    await requireInstitutionModuleEntitlement(user.institutionId, "documents");
+    const context = await requirePermission(req, "documents.read");
 
     const docRef = adminDb!.collection("documents").doc(documentId);
     const docSnap = await docRef.get();
     if (!docSnap.exists) return NextResponse.json({ error: "Document not found" }, { status: 404 });
     const doc = docSnap.data()!;
 
-    if (doc.institutionId !== user.institutionId) return NextResponse.json({ error: "Cross-institution" }, { status: 403 });
-    if (!(user.role === "Owner" || user.role === "Admin" || (user.role === "Manager" && user.departmentId && user.departmentId === doc.departmentId))) {
+    if (!canReadDocument(doc, context)) return NextResponse.json({ error: "Document access is not authorized." }, { status: 403 });
+    if (!(context.tier === "Owner" || context.tier === "Admin"
+      || (context.tier === "Manager" && context.membership.departmentIds.includes(String(doc.departmentId ?? ""))))) {
       return NextResponse.json({ error: "Not permitted to promote" }, { status: 403 });
+    }
+    if (doc.scanStatus !== "CLEAN" || typeof doc.scanId !== "string"
+      || typeof doc.scanSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(doc.scanSha256)) {
+      return NextResponse.json({ error: "A verified clean scanner verdict is required before promotion." }, { status: 409 });
     }
     if (doc.status !== "VERIFIED") return NextResponse.json({ error: "Only verified documents can be promoted" }, { status: 400 });
 
@@ -50,7 +37,7 @@ export async function POST(req: Request) {
     const destinationFile = adminStorage!.bucket().file(destPath);
     await adminDb!.runTransaction(async (transaction) => {
       const current = await transaction.get(docRef);
-      if (!current.exists || current.get("institutionId") !== user.institutionId
+      if (!current.exists || !canReadDocument(current.data() ?? {}, context)
         || current.get("status") !== "VERIFIED" || current.get("storagePath") !== srcPath) {
         throw new Error("DOCUMENT_CHANGED");
       }
@@ -62,7 +49,7 @@ export async function POST(req: Request) {
       moved = true;
       await adminDb!.runTransaction(async (transaction) => {
         const current = await transaction.get(docRef);
-        if (!current.exists || current.get("institutionId") !== user.institutionId
+        if (!current.exists || !canReadDocument(current.data() ?? {}, context)
           || current.get("status") !== "PROMOTING" || current.get("storagePath") !== srcPath) {
           throw new Error("DOCUMENT_CHANGED");
         }
@@ -102,6 +89,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, storagePath: destPath, status: "AVAILABLE" });
   } catch (error) {
+    if (error instanceof PermissionAuthorizationError) {
+    return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error("promote route error", error);
     return NextResponse.json({ error: "Unable to promote document" }, { status: 500 });
   }

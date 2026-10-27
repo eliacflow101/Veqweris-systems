@@ -39,6 +39,7 @@ const permissionDefinitions: PermissionDefinition[] = [
   { key: "employees.read", label: "View employee directory", module: "employees", sensitivity: "CONFIDENTIAL", dimensions: ["location", "unit", "department", "team"], dangerous: false, lowestTier: "Employee" },
   { key: "employees.invite", label: "Invite employees", module: "employees", sensitivity: "CONFIDENTIAL", dimensions: ["location", "unit", "department"], dangerous: true, lowestTier: "Admin" },
   { key: "employees.access.manage", label: "Manage employee access", module: "employees", sensitivity: "RESTRICTED", dimensions: ["location", "unit", "department", "team"], dangerous: true, lowestTier: "Admin" },
+  { key: "documents.read", label: "View document metadata", module: "documents", sensitivity: "INTERNAL", dimensions: ["location", "unit", "department"], dangerous: false, lowestTier: "Employee" },
   { key: "tasks.read", label: "View tasks", module: "tasks", sensitivity: "INTERNAL", dimensions: ["location", "unit", "department", "team"], dangerous: false, lowestTier: "Employee" },
   { key: "tasks.manage", label: "Manage tasks", module: "tasks", sensitivity: "INTERNAL", dimensions: ["location", "unit", "department", "team"], dangerous: false, lowestTier: "Manager" },
   { key: "inventory.stock.read", label: "View stock", module: "inventory", sensitivity: "CONFIDENTIAL", dimensions: ["location", "unit", "department"], dangerous: false, lowestTier: "Employee" },
@@ -46,6 +47,7 @@ const permissionDefinitions: PermissionDefinition[] = [
   { key: "finance.payment.read", label: "View payment details", module: "finance", sensitivity: "RESTRICTED", dimensions: ["location", "department"], dangerous: false, lowestTier: "Employee" },
   { key: "finance.payment.refund", label: "Refund payments", module: "finance", sensitivity: "RESTRICTED", dimensions: ["location", "department"], dangerous: true, lowestTier: "Admin" },
   { key: "health.record.read", label: "View health records", module: "healthcare", sensitivity: "RESTRICTED", dimensions: ["location", "unit", "department"], dangerous: false, lowestTier: "Employee" },
+  { key: "health.record.write", label: "Create and update health records", module: "healthcare", sensitivity: "RESTRICTED", dimensions: ["location", "unit", "department"], dangerous: true, lowestTier: "Employee" },
   { key: "school.students.read", label: "View student records", module: "school", sensitivity: "CONFIDENTIAL", dimensions: ["location", "unit", "department", "academic"], dangerous: false, lowestTier: "Employee" },
   { key: "school.safeguarding.read", label: "View safeguarding records", module: "school", sensitivity: "RESTRICTED", dimensions: ["location", "unit", "academic"], dangerous: true, lowestTier: "Employee" },
   { key: "organization.roles.manage", label: "Manage roles and permissions", module: "organization", sensitivity: "RESTRICTED", dimensions: [], dangerous: true, lowestTier: "Admin" },
@@ -53,6 +55,9 @@ const permissionDefinitions: PermissionDefinition[] = [
   { key: "organization.locations.manage", label: "Manage locations", module: "organization", sensitivity: "CONFIDENTIAL", dimensions: ["location"], dangerous: false, lowestTier: "Admin" },
   { key: "organization.units.manage", label: "Manage operational units", module: "organization", sensitivity: "CONFIDENTIAL", dimensions: ["location", "unit"], dangerous: false, lowestTier: "Admin" },
   { key: "organization.teams.manage", label: "Manage teams", module: "organization", sensitivity: "CONFIDENTIAL", dimensions: ["location", "unit", "department", "team"], dangerous: false, lowestTier: "Manager" },
+  { key: "security.center.read", label: "View security posture", module: "settings", sensitivity: "RESTRICTED", dimensions: [], dangerous: false, lowestTier: "Admin" },
+  { key: "security.incident.manage", label: "Manage security incidents", module: "settings", sensitivity: "RESTRICTED", dimensions: [], dangerous: true, lowestTier: "Admin" },
+  { key: "security.incident.contain", label: "Contain security incidents", module: "settings", sensitivity: "RESTRICTED", dimensions: [], dangerous: true, lowestTier: "Admin" },
 ];
 
 export const PERMISSION_REGISTRY: Readonly<Record<string, PermissionDefinition>> =

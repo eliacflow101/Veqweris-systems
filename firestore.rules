@@ -154,6 +154,102 @@ service cloud.firestore {
           || role in ["Clinician", "Nurse", "Reception", "Billing", "Laboratory", "Pharmacist"]);
     }
 
+    function clinicalPermissionDimensionAllows(permissionScope, membership, record, scopeDimension, recordField, membershipDimension) {
+      let grantDimensionValues = permissionScope.get(scopeDimension, []);
+      let membershipDimensionValues = membership.get(membershipDimension, null);
+      let recordHasDimension = recordField in record && record[recordField] != null;
+      let grantConstrained = scopeDimension in permissionScope;
+      let membershipConstrained = membershipDimensionValues is list
+        && (membership.tier == "Manager" || membershipDimensionValues.size() > 0);
+      return membershipDimensionValues is list
+        && grantDimensionValues is list
+        && (!grantConstrained
+          || (recordHasDimension
+            && record[recordField] is string
+            && record[recordField].size() > 0
+            && record[recordField] in grantDimensionValues))
+        && (!membershipConstrained
+          || (recordHasDimension
+            && record[recordField] is string
+            && record[recordField].size() > 0
+            && record[recordField] in membershipDimensionValues));
+    }
+
+    function clinicalRecordAuthorized(permission, record, clinicalRecordId) {
+      let membership = get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data;
+      let effective = get(/databases/$(database)/documents/effectivePermissions/$(request.auth.uid)).data;
+      let institution = get(/databases/$(database)/documents/institutions/$(request.auth.token.iid)).data;
+      let profile = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      let permissionScopes = effective.get("permissionScopes", {});
+      let permissionScope = permissionScopes.get(permission, {});
+      let sensitivity = record.sensitivity == "standard" ? 0
+        : record.sensitivity == "sensitive" ? 1
+        : record.sensitivity == "highly_sensitive" ? 2 : -1;
+      let grantCeiling = !("sensitivityCeiling" in permissionScope) ? 2
+        : permissionScope.sensitivityCeiling == "INTERNAL" ? 0
+        : permissionScope.sensitivityCeiling == "CONFIDENTIAL" ? 1
+        : permissionScope.sensitivityCeiling == "RESTRICTED" ? 2 : -1;
+      let membershipCeiling = "sensitivityCeiling" in membership
+        ? membership.sensitivityCeiling == "INTERNAL" ? 0
+          : membership.sensitivityCeiling == "CONFIDENTIAL" ? 1
+          : membership.sensitivityCeiling == "RESTRICTED" ? 2 : -1
+        : membership.tier in ["Owner", "Admin"] ? 2
+          : membership.tier == "Manager" ? 1 : 0;
+      return authenticated()
+        && request.auth.token.pt == "staff"
+        && request.auth.token.tier in ["Owner", "Admin", "Manager", "Employee"]
+        && request.auth.token.iid is string
+        && request.auth.token.pv is int
+        && membership.institutionId == request.auth.token.iid
+        && membership.tier == request.auth.token.tier
+        && membership.permissionVersion == request.auth.token.pv
+        && membership.status == "active"
+        && effective.institutionId == request.auth.token.iid
+        && effective.version == request.auth.token.pv
+        && record.clinicalRecordId == clinicalRecordId
+        && record.institutionId == request.auth.token.iid
+        && institution.status == "active"
+        && (("entitlement" in institution
+            && "modules" in institution.entitlement
+            && "healthcare" in institution.entitlement.modules)
+          || (!("entitlement" in institution)
+            && institution.planTier in ["internal", "developer", "partner", "enterprise", "professional"]))
+        && permission in permissionScopes
+        && permissionScope is map
+        && (!("institutionId" in permissionScope)
+          || permissionScope.institutionId == record.institutionId)
+        && record.patientId is string
+        && record.patientId.size() > 0
+        && record.encounterId is string
+        && record.encounterId.size() > 0
+        && record.recordType in ["observation", "diagnosis", "procedure", "prescription", "note"]
+        && record.summary is string
+        && record.authoredBy is string
+        && record.authoredBy.size() > 0
+        && record.createdAt is timestamp
+        && record.sensitivity in ["standard", "sensitive", "highly_sensitive"]
+        && "assignedPatientIds" in profile
+        && profile.assignedPatientIds is list
+        && record.patientId in profile.assignedPatientIds
+        && (!("specialtyId" in record)
+          || record.specialtyId == null
+          || (record.specialtyId is string
+            && (profile.get("specialtyId", null) == record.specialtyId
+              || (profile.get("specialtyIds", []) is list
+                && record.specialtyId in profile.get("specialtyIds", [])))))
+        && clinicalPermissionDimensionAllows(permissionScope, membership, record, "locationIds", "locationId", "locationIds")
+        && clinicalPermissionDimensionAllows(permissionScope, membership, record, "unitIds", "unitId", "unitIds")
+        && clinicalPermissionDimensionAllows(permissionScope, membership, record, "departmentIds", "departmentId", "departmentIds")
+        && (!("ownRecordsOnly" in permissionScope)
+          || (permissionScope.ownRecordsOnly is bool
+            && (!permissionScope.ownRecordsOnly || record.authoredBy == request.auth.uid)))
+        && sensitivity >= 0
+        && grantCeiling >= 0
+        && membershipCeiling >= 0
+        && sensitivity <= grantCeiling
+        && sensitivity <= membershipCeiling;
+    }
+
     function assignedPatient(record) {
       let profile = userDoc(request.auth.uid).data;
       return !("patientId" in record)
@@ -512,13 +608,13 @@ service cloud.firestore {
     }
 
     match /clinicalRecords/{clinicalRecordId} {
-      allow read: if healthcareRecordScope(resource.data) && assignedPatient(resource.data) && specialtyScope(resource.data)
-        && (request.auth.token.tier in ["Owner", "Admin"]
-          || request.auth.token.legacyRole in ["Clinician", "Nurse"]);
-      allow create, update: if healthcareRecordScope(request.resource.data) && assignedPatient(request.resource.data) && specialtyScope(request.resource.data)
-        && (request.auth.token.legacyRole in ["Clinician", "Nurse"]
-          || request.auth.token.tier in ["Owner", "Admin"]);
+      allow read: if clinicalRecordAuthorized("health.record.read", resource.data, clinicalRecordId);
+      allow create, update: if false;
       allow delete: if false;
+    }
+
+    match /clinicalRecordReadCursors/{cursorId} {
+      allow read, write: if false;
     }
 
     match /billingReferences/{billingReferenceId} {
@@ -762,37 +858,8 @@ service cloud.firestore {
 
       // Documents collection: tenant-scoped, role-aware access control
       match /documents/{documentId} {
-        allow create: if signedIn()
-          && institutionHasModule("documents")
-          && request.resource.data.documentId == documentId
-          && request.resource.data.institutionId == userDoc(request.auth.uid).data.institutionId
-          && request.resource.data.uploadedBy == request.auth.uid
-          && request.resource.data.status in ["UPLOADED","QUEUED","PROCESSING","EXTRACTED","NEEDS_REVIEW","VALIDATED","VERIFIED","AVAILABLE","FAILED","UNSUPPORTED","REJECTED"]
-          && request.resource.data.size is number
-          && request.resource.data.storagePath is string;
-
-        allow read: if signedIn()
-          && sameInstitution(resource.data.institutionId)
-          && institutionHasModule("documents")
-          && (
-            ownerOrAdmin()
-            || request.auth.uid == resource.data.uploadedBy
-            || (resource.data.departmentId == null)
-            || (hasRole("Manager") && userDoc(request.auth.uid).data.departmentId == resource.data.departmentId)
-            || (resource.data.allowedViewers != null && request.auth.uid in resource.data.allowedViewers)
-          );
-
-        allow update: if signedIn()
-          && sameInstitution(resource.data.institutionId)
-          && institutionHasModule("documents")
-          && request.resource.data.documentId == resource.data.documentId
-          && request.resource.data.institutionId == resource.data.institutionId
-          && (
-            ownerOrAdmin()
-            || request.auth.uid == resource.data.uploadedBy
-          );
-
-        allow delete: if sameInstitution(resource.data.institutionId) && institutionHasModule("documents") && ownerOrAdmin();
+        allow read: if false;
+        allow create, update, delete: if false;
       }
 
       match /bulkImportBatches/{batchId} {
@@ -1084,6 +1151,21 @@ service cloud.firestore {
     }
 
     match /settingsAuditEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /securityIncidents/{incidentId} {
+      allow read, write: if false;
+      match /timeline/{eventId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /securityAuditEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /securityIdempotency/{idempotencyId} {
       allow read, write: if false;
     }
 

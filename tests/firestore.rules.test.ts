@@ -8,7 +8,19 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { deleteField, doc, getDoc, setDoc, writeBatch } from "@firebase/firestore";
+import {
+  collection,
+  deleteDoc,
+  deleteField,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  query,
+  setDoc,
+  where,
+  writeBatch,
+} from "@firebase/firestore";
 
 const projectId = "veqweris-rules-test";
 const institutionA = "institution-a";
@@ -22,6 +34,8 @@ const employeeUid = "employee-a";
 const otherUid = "user-b";
 const clinicianUid = "clinician-a";
 const nurseUid = "nurse-a";
+const scopedWriterUid = "scoped-writer-a";
+const writeOnlyUid = "write-only-a";
 const suspensionTestUid = "employee-suspension-test";
 
 let testEnv: RulesTestEnvironment;
@@ -36,6 +50,8 @@ function authenticatedContext(uid: string, permissionVersion = 1) {
     [otherUid]: { iid: institutionB, tier: "Employee" },
     [clinicianUid]: { iid: institutionA, tier: "Employee", legacyRole: "Clinician" },
     [nurseUid]: { iid: institutionA, tier: "Employee", legacyRole: "Nurse" },
+    [scopedWriterUid]: { iid: institutionA, tier: "Employee" },
+    [writeOnlyUid]: { iid: institutionA, tier: "Employee" },
     [suspensionTestUid]: { iid: suspensionTestInstitution, tier: "Employee" },
   };
   const principal = principals[uid] ?? { iid: "untrusted", tier: "Employee" as const };
@@ -66,6 +82,27 @@ function userData(uid: string, role: "Owner" | "Admin" | "Manager" | "Employee" 
     status: "active",
     createdAt: new Date(),
     ...extra,
+  };
+}
+
+function effectivePermissionsData(
+  uid: string,
+  institutionId: string,
+  permissionKeys: string[] = [],
+  permissionScopes: Record<string, Record<string, unknown>> = {},
+) {
+  const scopes = Object.fromEntries(permissionKeys.map((key) => [
+    key,
+    permissionScopes[key] ?? { institutionId },
+  ]));
+  return {
+    uid,
+    institutionId,
+    version: 1,
+    grants: permissionKeys.map((key) => ({ key, scope: scopes[key] })),
+    permissionKeys,
+    permissionScopes: scopes,
+    status: "active",
   };
 }
 
@@ -159,6 +196,8 @@ async function seedData() {
       [otherUid, "Employee", institutionB],
       [clinicianUid, "Clinician", institutionA],
       [nurseUid, "Nurse", institutionA],
+      [scopedWriterUid, "Employee", institutionA],
+      [writeOnlyUid, "Employee", institutionA],
       [suspensionTestUid, "Employee", suspensionTestInstitution],
     ] as const) {
       await setDoc(doc(db, "users", uid), userData(uid, role, institutionId));
@@ -173,6 +212,7 @@ async function seedData() {
         permissionVersion: 1,
         status: "active",
       });
+      await setDoc(doc(db, "effectivePermissions", uid), effectivePermissionsData(uid, institutionId, uid === clinicianUid || uid === nurseUid ? ["health.record.read"] : []));
     }
     await setDoc(doc(db, "portalAccounts", "external-a"), {
       institutionId: institutionA,
@@ -437,20 +477,182 @@ test("Owner and Admin can edit another profile but cannot change membership stat
   await assertFails(setDoc(doc(adminDb, "users", managerUid), { status: "inactive" }, { merge: true }));
 });
 
-test("healthcare access enforces assignment, specialty, sensitivity, and institution", async () => {
+test("healthcare access requires effective permission and scope instead of tier bypasses", async () => {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     await setDoc(doc(db, "users", clinicianUid), userData(clinicianUid, "Clinician", institutionA, {
-      assignedPatientIds: ["patient-a"], specialtyId: "cardiology", healthcarePermissions: ["sensitive"],
+      assignedPatientIds: ["patient-a"], specialtyId: "cardiology",
     }));
     await setDoc(doc(db, "users", nurseUid), userData(nurseUid, "Nurse", institutionA, {
       assignedPatientIds: ["patient-b"], specialtyId: "general",
     }));
+    await setDoc(doc(db, "users", adminUid), userData(adminUid, "Admin", institutionA, {
+      assignedPatientIds: ["patient-a"], specialtyId: "cardiology",
+    }));
+    await setDoc(doc(db, "users", employeeUid), userData(employeeUid, "Employee", institutionA, {
+      assignedPatientIds: ["patient-a"], specialtyId: "cardiology",
+    }));
+    await setDoc(doc(db, "users", scopedWriterUid), userData(scopedWriterUid, "Employee", institutionA, {
+      assignedPatientIds: ["patient-a"], specialtyId: "cardiology",
+    }));
+    await setDoc(doc(db, "users", ownerUid), userData(ownerUid, "Owner", institutionA, {
+      assignedPatientIds: ["patient-a"], specialtyId: "cardiology",
+    }));
+    await setDoc(doc(db, "users", otherUid), userData(otherUid, "Employee", institutionB, {
+      assignedPatientIds: ["patient-a"], specialtyId: "cardiology",
+    }));
+    await setDoc(doc(db, "memberships", scopedWriterUid), {
+      locationIds: ["location-a"],
+      unitIds: ["unit-a"],
+      departmentIds: ["department-a"],
+    }, { merge: true });
+    for (const uid of [clinicianUid, employeeUid, scopedWriterUid, ownerUid, otherUid]) {
+      await setDoc(doc(db, "memberships", uid), { sensitivityCeiling: "RESTRICTED" }, { merge: true });
+    }
+    await setDoc(doc(db, "effectivePermissions", clinicianUid), effectivePermissionsData(clinicianUid, institutionA, ["health.record.read"]));
+    await setDoc(doc(db, "effectivePermissions", nurseUid), effectivePermissionsData(nurseUid, institutionA, ["health.record.read"]));
+    await setDoc(doc(db, "effectivePermissions", adminUid), effectivePermissionsData(adminUid, institutionA, []));
+    await setDoc(doc(db, "effectivePermissions", employeeUid), effectivePermissionsData(employeeUid, institutionA, ["health.record.read", "health.record.write"]));
+    await setDoc(doc(db, "effectivePermissions", scopedWriterUid), effectivePermissionsData(
+      scopedWriterUid,
+      institutionA,
+      ["health.record.read", "health.record.write"],
+      {
+        "health.record.read": { institutionId: institutionA },
+        "health.record.write": {
+          institutionId: institutionA,
+          ownRecordsOnly: true,
+          sensitivityCeiling: "RESTRICTED",
+        },
+      },
+    ));
+    await setDoc(doc(db, "effectivePermissions", ownerUid), effectivePermissionsData(ownerUid, institutionA, []));
+    await setDoc(doc(db, "effectivePermissions", otherUid), effectivePermissionsData(otherUid, institutionB, ["health.record.write"]));
+    await setDoc(doc(db, "effectivePermissions", writeOnlyUid), effectivePermissionsData(
+      writeOnlyUid,
+      institutionA,
+      ["health.record.write"],
+    ));
   });
-  await assertSucceeds(getDoc(doc(authenticatedContext(clinicianUid).firestore(), "clinicalRecords", "clinical-a")));
-  await assertFails(getDoc(doc(authenticatedContext(nurseUid).firestore(), "clinicalRecords", "clinical-a")));
+  const clinicianDb = authenticatedContext(clinicianUid).firestore();
+  const adminDb = authenticatedContext(adminUid).firestore();
+  const nurseDb = authenticatedContext(nurseUid).firestore();
+  const employeeDb = authenticatedContext(employeeUid).firestore();
+  const scopedWriterDb = authenticatedContext(scopedWriterUid).firestore();
+  const writeOnlyDb = authenticatedContext(writeOnlyUid).firestore();
+  const ownerDb = authenticatedContext(ownerUid).firestore();
+  const moduleDisabledDb = authenticatedContext(otherUid).firestore();
+  const clinicalRecord = {
+    clinicalRecordId: "clinical-write-test",
+    institutionId: institutionA,
+    patientId: "patient-a",
+    encounterId: "encounter-write-test",
+    recordType: "note",
+    summary: "authorized write",
+    sensitivity: "sensitive",
+    specialtyId: "cardiology",
+    authoredBy: employeeUid,
+    createdAt: new Date(),
+  };
+
+  await assertSucceeds(getDoc(doc(clinicianDb, "clinicalRecords", "clinical-a")));
+  await assertFails(getDocs(query(
+    collection(clinicianDb, "clinicalRecords"),
+    where("institutionId", "==", institutionA),
+  )));
+  await assertFails(getDocs(query(
+    collection(clinicianDb, "clinicalRecords"),
+    where("institutionId", "==", institutionA),
+    where("patientId", "==", "patient-a"),
+    limit(1),
+  )));
+  await assertFails(setDoc(doc(clinicianDb, "clinicalRecords", "clinical-read-only-create"), clinicalRecord));
+  await assertFails(setDoc(doc(clinicianDb, "clinicalRecords", "clinical-a"), { summary: "read-only update" }, { merge: true }));
+  await assertFails(getDoc(doc(writeOnlyDb, "clinicalRecords", "clinical-a")));
+  await assertFails(setDoc(doc(writeOnlyDb, "clinicalRecords", "clinical-write-only"), {
+    ...clinicalRecord, clinicalRecordId: "clinical-write-only", authoredBy: writeOnlyUid,
+  }));
+  await assertFails(getDoc(doc(adminDb, "clinicalRecords", "clinical-a")));
+  await assertFails(setDoc(doc(adminDb, "clinicalRecords", "clinical-admin-create"), clinicalRecord));
+  await assertFails(setDoc(doc(adminDb, "clinicalRecords", "clinical-a"), { summary: "admin update" }, { merge: true }));
+  await assertFails(setDoc(doc(ownerDb, "clinicalRecords", "clinical-owner-create"), clinicalRecord));
+  await assertFails(setDoc(doc(ownerDb, "clinicalRecords", "clinical-a"), { summary: "owner update" }, { merge: true }));
+  await assertFails(setDoc(doc(moduleDisabledDb, "clinicalRecords", "clinical-module-disabled"), {
+    ...clinicalRecord, institutionId: institutionB, authoredBy: otherUid,
+  }));
+  await assertFails(getDoc(doc(nurseDb, "clinicalRecords", "clinical-a")));
   await assertFails(getDoc(doc(authenticatedContext(employeeUid).firestore(), "clinicalRecords", "clinical-standard")));
   await assertFails(getDoc(doc(authenticatedContext(otherUid).firestore(), "clinicalRecords", "clinical-standard")));
+  await assertFails(getDoc(doc(testEnv.unauthenticatedContext().firestore(), "clinicalRecords", "clinical-a")));
+  await assertFails(getDoc(doc(employeeDb, "clinicalRecordReadCursors", "cursor-a")));
+  await assertFails(setDoc(doc(employeeDb, "clinicalRecordReadCursors", "cursor-a"), {
+    uid: employeeUid,
+    institutionId: institutionA,
+  }));
+  await assertFails(setDoc(doc(testEnv.unauthenticatedContext().firestore(), "clinicalRecords", "clinical-unauthenticated"), clinicalRecord));
+
+  await assertSucceeds(getDoc(doc(employeeDb, "clinicalRecords", "clinical-a")));
+  await assertFails(setDoc(doc(employeeDb, "clinicalRecords", "clinical-write-test"), clinicalRecord));
+  await assertFails(setDoc(doc(employeeDb, "clinicalRecords", "clinical-a"), { summary: "authorized update" }, { merge: true }));
+  await assertFails(setDoc(doc(employeeDb, "clinicalRecords", "clinical-write-test"), { patientId: deleteField() }, { merge: true }));
+  await assertFails(setDoc(doc(employeeDb, "clinicalRecords", "clinical-write-test"), { locationId: deleteField() }, { merge: true }));
+  await assertFails(setDoc(doc(employeeDb, "clinicalRecords", "clinical-write-test"), { unitId: deleteField() }, { merge: true }));
+  await assertFails(setDoc(doc(employeeDb, "clinicalRecords", "clinical-write-test"), { departmentId: "department-c" }, { merge: true }));
+  await assertFails(setDoc(doc(employeeDb, "clinicalRecords", "clinical-write-test"), { summary: deleteField() }, { merge: true }));
+  await assertFails(deleteDoc(doc(employeeDb, "clinicalRecords", "clinical-write-test")));
+  await assertFails(setDoc(doc(employeeDb, "clinicalRecords", "clinical-wrong-patient"), {
+    ...clinicalRecord, patientId: "patient-b",
+  }));
+  await assertFails(setDoc(doc(employeeDb, "clinicalRecords", "clinical-wrong-specialty"), {
+    ...clinicalRecord, specialtyId: "neurology",
+  }));
+
+  const scopedRecord = {
+    ...clinicalRecord,
+    clinicalRecordId: "clinical-scoped-write",
+    locationId: "location-a",
+    unitId: "unit-a",
+    departmentId: "department-a",
+    authoredBy: scopedWriterUid,
+  };
+  await assertFails(setDoc(doc(scopedWriterDb, "clinicalRecords", "clinical-scoped-write"), scopedRecord));
+  await assertFails(setDoc(doc(scopedWriterDb, "clinicalRecords", "clinical-out-of-department"), {
+    ...scopedRecord, departmentId: "department-c",
+  }));
+  await assertFails(setDoc(doc(scopedWriterDb, "clinicalRecords", "clinical-out-of-location"), {
+    ...scopedRecord, locationId: "location-b",
+  }));
+  await assertFails(setDoc(doc(scopedWriterDb, "clinicalRecords", "clinical-out-of-unit"), {
+    ...scopedRecord, unitId: "unit-b",
+  }));
+  const missingLocation: Record<string, unknown> = { ...scopedRecord };
+  delete missingLocation.locationId;
+  const missingUnit: Record<string, unknown> = { ...scopedRecord };
+  delete missingUnit.unitId;
+  const missingDepartment: Record<string, unknown> = { ...scopedRecord };
+  delete missingDepartment.departmentId;
+  await assertFails(setDoc(doc(scopedWriterDb, "clinicalRecords", "clinical-missing-location"), missingLocation));
+  await assertFails(setDoc(doc(scopedWriterDb, "clinicalRecords", "clinical-missing-unit"), missingUnit));
+  await assertFails(setDoc(doc(scopedWriterDb, "clinicalRecords", "clinical-missing-department"), missingDepartment));
+  await assertFails(setDoc(doc(scopedWriterDb, "clinicalRecords", "clinical-not-own-record"), {
+    ...scopedRecord, authoredBy: employeeUid,
+  }));
+  await assertFails(setDoc(doc(scopedWriterDb, "clinicalRecords", "clinical-scoped-write"), {
+    departmentId: "department-c",
+  }, { merge: true }));
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), "effectivePermissions", writeOnlyUid), {
+      uid: writeOnlyUid,
+      institutionId: institutionA,
+      version: 1,
+      permissionKeys: ["health.record.write"],
+      status: "active",
+    });
+  });
+  await assertFails(setDoc(doc(writeOnlyDb, "clinicalRecords", "clinical-missing-scope-map"), {
+    ...clinicalRecord, clinicalRecordId: "clinical-missing-scope-map", authoredBy: writeOnlyUid,
+  }));
 });
 
 test("unauthenticated requests cannot read or write anything", async () => {

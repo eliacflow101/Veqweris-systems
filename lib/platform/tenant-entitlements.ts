@@ -1,6 +1,8 @@
 import { navigationConfig } from "@/lib/navigation";
 import { adminDb } from "@/lib/firebase/admin";
 import { readPlatformState, tenantModuleCatalogue } from "@/lib/platform";
+import type { Transaction } from "firebase-admin/firestore";
+import { loadManagedPlanCatalogInTransaction } from "./managed-catalog";
 import { loadManagedPlanCatalog } from "@/lib/platform/managed-catalog";
 import type { PlanFeature } from "@/lib/platform";
 
@@ -11,6 +13,19 @@ export async function institutionHasModuleEntitlement(institutionId: string, mod
   if (!snapshot.exists) return false;
   const plans = await loadManagedPlanCatalog(adminDb, "tenant-entitlement-reader");
   const state = readPlatformState(institutionId, snapshot.data() ?? {}, { tenantModules, plans });
+  return state.status === "active" && state.entitlement.modules.includes(moduleId);
+}
+
+export async function institutionHasModuleEntitlementInTransaction(
+  transaction: Transaction,
+  institutionId: string,
+  moduleId: string,
+): Promise<boolean> {
+  if (!adminDb) throw new Error("SERVICE_UNAVAILABLE");
+  const institutionSnapshot = await transaction.get(adminDb.collection("institutions").doc(institutionId));
+  if (!institutionSnapshot.exists || institutionSnapshot.get("status") !== "active") return false;
+  const plans = await loadManagedPlanCatalogInTransaction(transaction, adminDb);
+  const state = readPlatformState(institutionId, institutionSnapshot.data() ?? {}, { tenantModules, plans });
   return state.status === "active" && state.entitlement.modules.includes(moduleId);
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -27,6 +27,31 @@ import {
   useInventoryItems,
 } from "@/lib/firebase/data";
 import { buildHealthcareDashboardMetrics, calculateHealthcareReadiness, generateHealthcarePatientNumber } from "@/lib/healthcare";
+import type { ClinicalRecord } from "@/lib/healthcare/models";
+
+type ClinicalRecordForm = {
+  patientId: string;
+  encounterId: string;
+  recordType: ClinicalRecord["recordType"];
+  summary: string;
+  sensitivity: ClinicalRecord["sensitivity"];
+  specialtyId: string;
+  locationId: string;
+  unitId: string;
+  departmentId: string;
+};
+
+const emptyClinicalRecordForm: ClinicalRecordForm = {
+  patientId: "",
+  encounterId: "",
+  recordType: "note",
+  summary: "",
+  sensitivity: "standard",
+  specialtyId: "",
+  locationId: "",
+  unitId: "",
+  departmentId: "",
+};
 
 export default function HealthcarePage() {
   const { profile } = useAuth();
@@ -70,7 +95,7 @@ export default function HealthcarePage() {
     ["Encounters", encounters.data.length],
     ["Services", services.data.length],
     ["Queue entries", queue.data.length],
-    ["Clinical records", clinical.data.length],
+    ["Clinical records loaded", clinical.data.length],
     ["Billing references", billing.data.length],
     ["Documents", documents.data.length],
     ["Lab requests", laboratoryRequests.data.length],
@@ -83,6 +108,103 @@ export default function HealthcarePage() {
   const [dispenseForm, setDispenseForm] = useState({ patientId: "", medicineId: "", batchId: "", quantity: "1" });
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [clinicalFormOpen, setClinicalFormOpen] = useState(false);
+  const [clinicalForm, setClinicalForm] = useState<ClinicalRecordForm>(emptyClinicalRecordForm);
+  const [editingClinicalRecord, setEditingClinicalRecord] = useState<ClinicalRecord | null>(null);
+  const [editingClinicalForm, setEditingClinicalForm] = useState<Pick<ClinicalRecordForm, "recordType" | "summary" | "sensitivity" | "specialtyId"> | null>(null);
+  const [clinicalMessage, setClinicalMessage] = useState<string | null>(null);
+  const [clinicalSaving, setClinicalSaving] = useState(false);
+  const createIdempotencyKey = useRef<string | null>(null);
+  const updateIdempotencyKey = useRef<{ recordId: string; key: string } | null>(null);
+  const assignedPatients = patients.data.filter((patient) =>
+    profile?.assignedPatientIds?.includes(patient.patientId));
+  const selectedPatientEncounters = encounters.data.filter((encounter) =>
+    encounter.patientId === clinicalForm.patientId);
+  const writeCapabilities = clinical.writeCapabilities;
+  const clinicalSpecialtyIds = writeCapabilities?.specialtyIds ?? [];
+  const clinicalSensitivityOptions = writeCapabilities?.sensitivities ?? [];
+  const clinicalScopeSelectionValid = writeCapabilities
+    ? (["locationId", "unitId", "departmentId"] as const).every((field) => {
+      const dimension = writeCapabilities.dimensions[field];
+      return !dimension.required
+        || (dimension.allowedIds.length > 0
+          && dimension.allowedIds.includes(clinicalForm[field]));
+    })
+    : false;
+
+  async function createClinicalRecord(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!clinical.canWrite || !clinicalForm.patientId || !clinicalForm.encounterId || !clinicalForm.summary.trim()) return;
+    setClinicalSaving(true);
+    setClinicalMessage(null);
+    createIdempotencyKey.current ??= crypto.randomUUID();
+    try {
+      const response = await fetch("/api/healthcare/clinical-records", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey: createIdempotencyKey.current,
+          patientId: clinicalForm.patientId,
+          encounterId: clinicalForm.encounterId,
+          recordType: clinicalForm.recordType,
+          summary: clinicalForm.summary,
+          sensitivity: clinicalForm.sensitivity,
+          ...(clinicalSpecialtyIds.length ? { specialtyId: clinicalForm.specialtyId || clinicalSpecialtyIds[0] } : {}),
+          ...(clinicalForm.locationId ? { locationId: clinicalForm.locationId } : {}),
+          ...(clinicalForm.unitId ? { unitId: clinicalForm.unitId } : {}),
+          ...(clinicalForm.departmentId ? { departmentId: clinicalForm.departmentId } : {}),
+        }),
+      });
+      const body = await response.json() as { error?: string; clinicalRecordId?: string };
+      if (!response.ok) throw new Error(body.error || "Unable to create the clinical record.");
+      createIdempotencyKey.current = null;
+      setClinicalForm(emptyClinicalRecordForm);
+      setClinicalFormOpen(false);
+      setClinicalMessage("Clinical record created.");
+      await clinical.refresh();
+    } catch (reason) {
+      setClinicalMessage(reason instanceof Error ? reason.message : "Unable to create the clinical record.");
+    } finally {
+      setClinicalSaving(false);
+    }
+  }
+
+  async function updateClinicalRecord(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!clinical.canWrite || !editingClinicalRecord || !editingClinicalForm) return;
+    setClinicalSaving(true);
+    setClinicalMessage(null);
+    if (updateIdempotencyKey.current?.recordId !== editingClinicalRecord.clinicalRecordId) {
+      updateIdempotencyKey.current = { recordId: editingClinicalRecord.clinicalRecordId, key: crypto.randomUUID() };
+    }
+    try {
+      const response = await fetch(
+        `/api/healthcare/clinical-records/${encodeURIComponent(editingClinicalRecord.clinicalRecordId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            idempotencyKey: updateIdempotencyKey.current.key,
+            recordType: editingClinicalForm.recordType,
+            summary: editingClinicalForm.summary,
+            sensitivity: editingClinicalForm.sensitivity,
+            ...(clinicalSpecialtyIds.length ? { specialtyId: editingClinicalForm.specialtyId || clinicalSpecialtyIds[0] } : {}),
+          }),
+        },
+      );
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error || "Unable to update the clinical record.");
+      updateIdempotencyKey.current = null;
+      setEditingClinicalRecord(null);
+      setEditingClinicalForm(null);
+      setClinicalMessage("Clinical record updated.");
+      await clinical.refresh();
+    } catch (reason) {
+      setClinicalMessage(reason instanceof Error ? reason.message : "Unable to update the clinical record.");
+    } finally {
+      setClinicalSaving(false);
+    }
+  }
 
   async function registerPatient() {
     if (!institutionId || !patientForm.fullName.trim()) return;
@@ -304,6 +426,168 @@ export default function HealthcarePage() {
         <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">Healthcare record families</h3>
         <div className="mt-4 grid gap-2 md:grid-cols-3">{counts.map(([label, value]) => <div key={String(label)} className="rounded-md border border-line bg-surface-raised p-3"><p className="text-xs text-muted">{label}</p><p className="mt-1 text-xl font-semibold text-ink">{value}</p></div>)}</div>
       </Card>
+      <Card className="space-y-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">Clinical records</h3>
+            <p className="mt-1 text-xs text-muted">Records are returned only after server-side patient, specialty, membership, permission, and tenant-scope checks.</p>
+          </div>
+          {clinical.canWrite && (
+            <Button onClick={() => { setClinicalFormOpen((open) => !open); setClinicalMessage(null); }}>
+              {clinicalFormOpen ? "Close form" : "Create clinical record"}
+            </Button>
+          )}
+        </div>
+        {clinicalMessage && <p role="status" className="rounded-md border border-line bg-surface-raised p-3 text-sm text-muted">{clinicalMessage}</p>}
+        {clinical.loading && <p className="text-sm text-muted">Loading authorized clinical records…</p>}
+        {clinical.error && <p role="alert" className="text-sm text-red-600">{clinical.error}</p>}
+        {!clinical.loading && !clinical.error && !clinical.canRead && clinical.canWrite && (
+          <p className="text-sm text-muted">You can create records, but viewing existing records requires the separate health.record.read permission.</p>
+        )}
+        {!clinical.loading && !clinical.error && clinical.canRead && clinical.data.length === 0 && (
+          <EmptyState title="No authorized clinical records" description="Records will appear here when they match your active patient assignments and resource scopes." />
+        )}
+        {clinical.data.map((record) => (
+          <article key={record.clinicalRecordId} className="rounded-lg border border-line bg-surface-raised p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h4 className="font-semibold capitalize text-ink">{record.recordType} · {record.patientId}</h4>
+                <p className="mt-1 text-xs text-muted">Encounter {record.encounterId} · {new Date(record.createdAt).toLocaleString()} · {record.sensitivity.replaceAll("_", " ")}</p>
+              </div>
+              {clinical.canWrite && record.canUpdate && (
+                <Button
+                  className="bg-surface-raised"
+                  disabled={clinicalSaving}
+                  onClick={() => {
+                    setEditingClinicalRecord(record);
+                    setEditingClinicalForm({
+                      recordType: record.recordType,
+                      summary: record.summary,
+                      sensitivity: record.sensitivity,
+                      specialtyId: record.specialtyId ?? clinicalSpecialtyIds[0] ?? "",
+                    });
+                    setClinicalMessage(null);
+                    updateIdempotencyKey.current = null;
+                  }}
+                >
+                  Edit
+                </Button>
+              )}
+            </div>
+            <p className="mt-3 whitespace-pre-wrap text-sm text-ink">{record.summary}</p>
+          </article>
+        ))}
+        {clinical.nextCursor && (
+          <Button className="bg-surface-raised" disabled={clinical.loadingMore} onClick={clinical.loadMore}>
+            {clinical.loadingMore ? "Loading…" : "Load more records"}
+          </Button>
+        )}
+      </Card>
+
+      {clinical.canWrite && clinicalFormOpen && writeCapabilities && (
+        <Card className="p-5">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">Create clinical record</h3>
+          <form className="mt-4 space-y-3" onSubmit={createClinicalRecord}>
+            <label className="block space-y-1 text-sm text-muted">
+              <span>Assigned patient</span>
+              <select required value={clinicalForm.patientId} onChange={(event) => setClinicalForm((current) => ({ ...current, patientId: event.target.value, encounterId: "" }))} className="w-full rounded-md border border-line bg-surface p-2 text-ink">
+                <option value="">Select an assigned patient</option>
+                {assignedPatients.map((patient) => <option key={patient.patientId} value={patient.patientId}>{patient.fullName} ({patient.patientNumber})</option>)}
+              </select>
+            </label>
+            <label className="block space-y-1 text-sm text-muted">
+              <span>Encounter</span>
+              <select required value={clinicalForm.encounterId} onChange={(event) => setClinicalForm((current) => ({ ...current, encounterId: event.target.value }))} className="w-full rounded-md border border-line bg-surface p-2 text-ink">
+                <option value="">Select an encounter for this patient</option>
+                {selectedPatientEncounters.map((encounter) => <option key={encounter.encounterId} value={encounter.encounterId}>{encounter.encounterType} · {encounter.status} · {encounter.encounterId}</option>)}
+              </select>
+            </label>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="block space-y-1 text-sm text-muted">
+                <span>Record type</span>
+                <select value={clinicalForm.recordType} onChange={(event) => setClinicalForm((current) => ({ ...current, recordType: event.target.value as ClinicalRecord["recordType"] }))} className="w-full rounded-md border border-line bg-surface p-2 text-ink">
+                  {["observation", "diagnosis", "procedure", "prescription", "note"].map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </label>
+              <label className="block space-y-1 text-sm text-muted">
+                <span>Sensitivity</span>
+                <select required value={clinicalForm.sensitivity} onChange={(event) => setClinicalForm((current) => ({ ...current, sensitivity: event.target.value as ClinicalRecord["sensitivity"] }))} className="w-full rounded-md border border-line bg-surface p-2 text-ink">
+                  {clinicalSensitivityOptions.map((sensitivity) => <option key={sensitivity} value={sensitivity}>{sensitivity.replaceAll("_", " ")}</option>)}
+                </select>
+              </label>
+              {clinicalSpecialtyIds.length > 1 && (
+                <label className="block space-y-1 text-sm text-muted">
+                  <span>Specialty</span>
+                  <select value={clinicalForm.specialtyId || clinicalSpecialtyIds[0]} onChange={(event) => setClinicalForm((current) => ({ ...current, specialtyId: event.target.value }))} className="w-full rounded-md border border-line bg-surface p-2 text-ink">
+                    {clinicalSpecialtyIds.map((specialtyId) => <option key={specialtyId} value={specialtyId}>{specialtyId}</option>)}
+                  </select>
+                </label>
+              )}
+              {clinicalSpecialtyIds.length === 1 && <p className="self-end text-sm text-muted">Specialty: {clinicalSpecialtyIds[0]}</p>}
+            </div>
+            {(["locationId", "unitId", "departmentId"] as const).map((field) => {
+              const dimension = writeCapabilities.dimensions[field];
+              if (!dimension.required) return null;
+              return (
+                <label key={field} className="block space-y-1 text-sm text-muted">
+                  <span>{field.replace("Id", "")} scope</span>
+                  <select required value={clinicalForm[field]} onChange={(event) => setClinicalForm((current) => ({ ...current, [field]: event.target.value }))} className="w-full rounded-md border border-line bg-surface p-2 text-ink">
+                    <option value="">Select authorized {field.replace("Id", "")}</option>
+                    {dimension.allowedIds.map((id) => <option key={id} value={id}>{id}</option>)}
+                  </select>
+                  {!dimension.allowedIds.length && <span className="text-xs text-red-600">No matching {field.replace("Id", "")} scope is available for this permission.</span>}
+                </label>
+              );
+            })}
+            <label className="block space-y-1 text-sm text-muted">
+              <span>Clinical summary</span>
+              <textarea required maxLength={4000} value={clinicalForm.summary} onChange={(event) => setClinicalForm((current) => ({ ...current, summary: event.target.value }))} className="min-h-28 w-full rounded-md border border-line bg-surface p-3 text-sm text-ink" />
+            </label>
+            {!assignedPatients.length && <p className="text-sm text-red-600">No assigned patients are available for this account.</p>}
+            {!clinicalSensitivityOptions.length && <p className="text-sm text-red-600">The active write scope does not permit any clinical-record sensitivity level.</p>}
+            <Button type="submit" disabled={clinicalSaving || !assignedPatients.length || !clinicalSensitivityOptions.includes(clinicalForm.sensitivity) || !clinicalScopeSelectionValid || !clinicalForm.summary.trim()}>
+              {clinicalSaving ? "Saving…" : "Save clinical record"}
+            </Button>
+          </form>
+        </Card>
+      )}
+
+      {clinical.canWrite && editingClinicalRecord && editingClinicalForm && (
+        <Card className="p-5">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">Edit clinical record</h3>
+          <p className="mt-2 text-xs text-muted">Patient and encounter identities are fixed; the server rechecks the existing and resulting record scopes.</p>
+          <form className="mt-4 space-y-3" onSubmit={updateClinicalRecord}>
+            <label className="block space-y-1 text-sm text-muted">
+              <span>Record type</span>
+              <select value={editingClinicalForm.recordType} onChange={(event) => setEditingClinicalForm((current) => current && ({ ...current, recordType: event.target.value as ClinicalRecord["recordType"] }))} className="w-full rounded-md border border-line bg-surface p-2 text-ink">
+                {["observation", "diagnosis", "procedure", "prescription", "note"].map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+            </label>
+            <label className="block space-y-1 text-sm text-muted">
+              <span>Sensitivity</span>
+              <select value={editingClinicalForm.sensitivity} onChange={(event) => setEditingClinicalForm((current) => current && ({ ...current, sensitivity: event.target.value as ClinicalRecord["sensitivity"] }))} className="w-full rounded-md border border-line bg-surface p-2 text-ink">
+                {clinicalSensitivityOptions.map((sensitivity) => <option key={sensitivity} value={sensitivity}>{sensitivity.replaceAll("_", " ")}</option>)}
+              </select>
+            </label>
+            {clinicalSpecialtyIds.length > 1 && (
+              <label className="block space-y-1 text-sm text-muted">
+                <span>Specialty</span>
+                <select value={editingClinicalForm.specialtyId || clinicalSpecialtyIds[0]} onChange={(event) => setEditingClinicalForm((current) => current && ({ ...current, specialtyId: event.target.value }))} className="w-full rounded-md border border-line bg-surface p-2 text-ink">
+                  {clinicalSpecialtyIds.map((specialtyId) => <option key={specialtyId} value={specialtyId}>{specialtyId}</option>)}
+                </select>
+              </label>
+            )}
+            <label className="block space-y-1 text-sm text-muted">
+              <span>Clinical summary</span>
+              <textarea required maxLength={4000} value={editingClinicalForm.summary} onChange={(event) => setEditingClinicalForm((current) => current && ({ ...current, summary: event.target.value }))} className="min-h-28 w-full rounded-md border border-line bg-surface p-3 text-sm text-ink" />
+            </label>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={clinicalSaving || !editingClinicalForm.summary.trim()}>{clinicalSaving ? "Saving…" : "Save changes"}</Button>
+              <Button type="button" className="bg-surface-raised" disabled={clinicalSaving} onClick={() => { setEditingClinicalRecord(null); setEditingClinicalForm(null); }}>Cancel</Button>
+            </div>
+          </form>
+        </Card>
+      )}
       <div className="grid gap-4 xl:grid-cols-2">
         <Card className="p-5">
           <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-muted">Laboratory request</h3>

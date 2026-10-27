@@ -3,7 +3,7 @@
 import {
   collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where,
 } from "@firebase/firestore";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { db } from "./client";
 import type { ApprovalRecord, ApprovalStatus, Conversation, Department, Institution, Message, PlannerEvent, SecurityEvent, SecurityEventType, Task, UserProfile, TaskStatus, TaskPriority, UserPreferences } from "./models";
 import type { AcademicEnrollment, AcademicLevelRecord, AcademicYear, CurriculumRecord, GuardianRecord, PlacementReview, SchoolClassRecord, SchoolProfile, StreamRecord, StudentGuardianLink, StudentRecord, SubjectRecord } from "@/lib/school";
@@ -33,27 +33,62 @@ export function useCollectionData<T>(path: string, institutionId?: string) {
 }
 
 export function useDocuments(institutionId?: string, status?: string) {
-  const [data, setData] = useState<any[]>([]);
+  type DocumentMetadata = import("@/lib/documents/models").DocumentMetadata;
+  type PageResponse = { documents: DocumentMetadata[]; nextCursor: string | null; error?: string };
+  const [data, setData] = useState<DocumentMetadata[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   useEffect(() => {
     let mounted = true;
-    if (!db || !institutionId) { setData([]); setLoading(false); return; }
+    if (!institutionId) { setData([]); setNextCursor(null); setLoading(false); return; }
+    const controller = new AbortController();
     setLoading(true);
+    setError(null);
     const load = async () => {
       try {
-        const base = collection(db!, "documents");
-        const q = status
-          ? query(base, where("institutionId", "==", institutionId), where("status", "==", status))
-          : query(base, where("institutionId", "==", institutionId));
-        const snap = await getDocs(q);
-        if (mounted) setData(snap.docs.map((item) => item.data()));
-      } catch (e) { if (mounted) setData([]); }
+        const params = new URLSearchParams();
+        if (status) params.set("status", status);
+        const response = await fetch(`/api/documents${params.size ? `?${params}` : ""}`, { signal: controller.signal });
+        const body = await response.json() as PageResponse;
+        if (!response.ok) throw new Error(body.error ?? "Unable to load documents.");
+        if (mounted) {
+          setData(body.documents);
+          setNextCursor(body.nextCursor);
+        }
+      } catch (reason) {
+        if (mounted && !controller.signal.aborted) {
+          setData([]);
+          setError(reason instanceof Error ? reason.message : "Unable to load documents.");
+        }
+      }
       finally { if (mounted) setLoading(false); }
     };
     void load();
-    return () => { mounted = false; };
-  }, [institutionId, status]);
-  return { data, loading };
+    return () => { mounted = false; controller.abort(); };
+  }, [institutionId, status, reloadVersion]);
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ cursor: nextCursor });
+      if (status) params.set("status", status);
+      const response = await fetch(`/api/documents?${params}`);
+      const body = await response.json() as PageResponse;
+      if (!response.ok) throw new Error(body.error ?? "Unable to load more documents.");
+      setData((current) => [...current, ...body.documents]);
+      setNextCursor(body.nextCursor);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load more documents.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+  return { data, loading, loadingMore, error, nextCursor, loadMore, refresh: () => setReloadVersion((value) => value + 1) };
 }
 
 export const useDepartments = (institutionId?: string) => useCollectionData<Department>("departments", institutionId);
@@ -85,7 +120,93 @@ export const useHealthcareServices = (institutionId?: string) => useCollectionDa
 export const useHealthcareQueueEntries = (institutionId?: string) => useCollectionData<HealthcareQueueEntry>("healthcareQueue", institutionId);
 export const useHealthcareServicePoints = (institutionId?: string) => useCollectionData<HealthcareServicePoint>("healthcareServicePoints", institutionId);
 export const useHealthcareResources = (institutionId?: string) => useCollectionData<HealthcareResource>("healthcareResources", institutionId);
-export const useClinicalRecords = (institutionId?: string) => useCollectionData<ClinicalRecord>("clinicalRecords", institutionId);
+type ClinicalRecordApiItem = ClinicalRecord & { createdAt: string; updatedAt?: string; canUpdate: boolean };
+type ClinicalRecordWriteCapabilities = {
+  specialtyIds: string[];
+  sensitivities: ClinicalRecord["sensitivity"][];
+  dimensions: Record<"locationId" | "unitId" | "departmentId", { required: boolean; allowedIds: string[] }>;
+};
+type ClinicalRecordApiResponse = {
+  records: ClinicalRecordApiItem[];
+  nextCursor: string | null;
+  canRead: boolean;
+  canWrite: boolean;
+  writeCapabilities: ClinicalRecordWriteCapabilities | null;
+  error?: string;
+};
+
+export function useClinicalRecords(institutionId?: string) {
+  const [data, setData] = useState<ClinicalRecordApiItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [canRead, setCanRead] = useState(false);
+  const [canWrite, setCanWrite] = useState(false);
+  const [writeCapabilities, setWriteCapabilities] = useState<ClinicalRecordWriteCapabilities | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
+
+  const loadPage = useCallback(async (cursor: string | null, replace: boolean) => {
+    if (!institutionId) {
+      setData([]);
+      setNextCursor(null);
+      setCanRead(false);
+      setCanWrite(false);
+      setWriteCapabilities(null);
+      setLoading(false);
+      setLoadingMore(false);
+      return;
+    }
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    if (replace) setLoading(true);
+    else setLoadingMore(true);
+    setError(null);
+    try {
+      const url = new URL("/api/healthcare/clinical-records", window.location.origin);
+      if (cursor) url.searchParams.set("cursor", cursor);
+      const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
+      const body = await response.json() as ClinicalRecordApiResponse;
+      if (!response.ok) throw new Error(body.error || "Unable to load clinical records.");
+      setData((current) => replace ? body.records : [...current, ...body.records]);
+      setNextCursor(body.nextCursor);
+      setCanRead(body.canRead);
+      setCanWrite(body.canWrite);
+      setWriteCapabilities(body.writeCapabilities);
+    } catch (reason) {
+      if (reason instanceof Error && reason.name === "AbortError") return;
+      setError(reason instanceof Error ? reason.message : "Unable to load clinical records.");
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    }
+  }, [institutionId]);
+
+  useEffect(() => {
+    void loadPage(null, true);
+    return () => controllerRef.current?.abort();
+  }, [loadPage]);
+
+  const loadMore = useCallback(() => {
+    if (nextCursor && !loading && !loadingMore) void loadPage(nextCursor, false);
+  }, [loadPage, loading, loadingMore, nextCursor]);
+  const refresh = useCallback(() => loadPage(null, true), [loadPage]);
+  return {
+    data,
+    loading,
+    loadingMore,
+    error,
+    canRead,
+    canWrite,
+    nextCursor,
+    writeCapabilities,
+    loadMore,
+    refresh,
+  };
+}
 export const useBillingReferences = (institutionId?: string) => useCollectionData<BillingReference>("billingReferences", institutionId);
 export const useHealthcareDocuments = (institutionId?: string) => useCollectionData<HealthcareDocument>("healthcareDocuments", institutionId);
 export const useLaboratoryRequests = (institutionId?: string) => useCollectionData<LaboratoryRequest>("laboratoryRequests", institutionId);

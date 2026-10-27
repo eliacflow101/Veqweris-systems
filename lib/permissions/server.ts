@@ -117,6 +117,7 @@ export async function compileStaffAuthorization(uid: string, options: { revokeTo
     version,
     grants,
     permissionKeys: grants.map(({ key }) => key),
+    permissionScopes: Object.fromEntries(grants.map(({ key, scope }) => [key, scope ?? {}])),
     status: membership.status,
     createdAt: membershipSnapshot.get("createdAt") ?? now,
     createdBy: membershipSnapshot.get("createdBy") ?? "system:permission-compiler",

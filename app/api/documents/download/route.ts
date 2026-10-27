@@ -1,16 +1,8 @@
 import { NextResponse } from "next/server";
-import { adminDb, adminStorage, adminAuth } from "@/lib/firebase/admin";
-import { cookies } from "next/headers";
-import { verifyActiveSession } from "@/lib/firebase/server-auth";
-import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
-
-async function getSessionToken(req: Request) {
-  const authHeader = req.headers.get("authorization") || "";
-  const tokenFromHeader = authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
-  if (tokenFromHeader) return tokenFromHeader;
-  const cookieStore = await cookies();
-  return cookieStore.get("__session")?.value ?? null;
-}
+import type { DocumentData } from "firebase-admin/firestore";
+import { adminDb, adminStorage } from "@/lib/firebase/admin";
+import { PermissionAuthorizationError, requirePermission } from "@/lib/permissions/server";
+import { canReadDocument } from "@/lib/documents/access";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -23,36 +15,40 @@ export async function GET(req: Request) {
   }
 
   try {
-    const token = await getSessionToken(req);
-    if (!token) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    const decoded = await verifyActiveSession(token);
-    const userSnap = await adminDb.collection("users").doc(decoded.uid).get();
-    if (!userSnap.exists) return NextResponse.json({ error: "User not found" }, { status: 403 });
-    const user = userSnap.data()!;
-    if (!user.institutionId) return NextResponse.json({ error: "Institution profile required" }, { status: 403 });
-    await requireInstitutionModuleEntitlement(user.institutionId, "documents");
+    const context = await requirePermission(req, "documents.read");
 
-    let docPath = path;
-    if (!docPath && documentId) {
+    let documentData: DocumentData | undefined;
+    if (documentId) {
       const docSnap = await adminDb.collection("documents").doc(documentId).get();
       if (!docSnap.exists) return NextResponse.json({ error: "Document metadata not found" }, { status: 404 });
-      const doc = docSnap.data()!;
-      if (doc.status !== "AVAILABLE") return NextResponse.json({ error: "Document is not available for download" }, { status: 403 });
-      if (doc.institutionId !== user.institutionId) return NextResponse.json({ error: "Cross-institution access denied" }, { status: 403 });
-      docPath = doc.storagePath;
+      documentData = docSnap.data();
     } else {
       const docs = await adminDb.collection("documents").where("storagePath", "==", path).limit(1).get();
       if (docs.empty) return NextResponse.json({ error: "Document metadata not found" }, { status: 404 });
-      const doc = docs.docs[0].data();
-      if (doc.status !== "AVAILABLE") return NextResponse.json({ error: "Document is not available for download" }, { status: 403 });
-      if (doc.institutionId !== user.institutionId) return NextResponse.json({ error: "Cross-institution access denied" }, { status: 403 });
+      documentData = docs.docs[0].data();
+    }
+    if (!documentData || !canReadDocument(documentData, context)) {
+      return NextResponse.json({ error: "Document access is not authorized." }, { status: 403 });
+    }
+    if (documentData.status !== "AVAILABLE") {
+      return NextResponse.json({ error: "Document is not available for download" }, { status: 403 });
+    }
+    if (documentData.scanStatus !== "CLEAN" || typeof documentData.scanId !== "string"
+      || typeof documentData.scanSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(documentData.scanSha256)) {
+      return NextResponse.json({ error: "The document has no verified clean scanner verdict." }, { status: 403 });
+    }
+    if (typeof documentData.storagePath !== "string") {
+      return NextResponse.json({ error: "Document storage is unavailable." }, { status: 404 });
     }
 
     const bucket = adminStorage.bucket();
-    const file = bucket.file(docPath as string);
+    const file = bucket.file(documentData.storagePath);
     const [signedUrl] = await file.getSignedUrl({ action: "read", expires: Date.now() + 5 * 60 * 1000 });
     return NextResponse.redirect(signedUrl);
   } catch (err) {
+    if (err instanceof PermissionAuthorizationError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     console.error("Error generating download url", err);
     return NextResponse.json({ error: "Unable to generate download URL" }, { status: 500 });
   }

@@ -2,18 +2,18 @@
 
 import { useState } from "react";
 import { useAuth } from "@/lib/auth-context";
-import { useCollectionData } from "@/lib/firebase/data";
-import type { DocumentRecord } from "@/lib/firebase/models";
+import { useDocuments } from "@/lib/firebase/data";
 
 export default function DocumentsPage() {
   const { profile, user } = useAuth();
-  const { data: docs, loading } = useCollectionData<DocumentRecord>("documents", profile?.institutionId);
+  const { data: docs, loading, loadingMore, error, nextCursor, loadMore, refresh } = useDocuments(profile?.institutionId);
   const [query, setQuery] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   if (!profile) return <div className="p-4">Sign in to view documents.</div>;
+  if (error) return <div className="p-4 text-sm text-danger" role="alert">{error} <button type="button" className="underline" onClick={refresh}>Retry</button></div>;
 
   const uploadFile = async () => {
     if (!file || !user) return;
@@ -33,6 +33,7 @@ export default function DocumentsPage() {
       const initJson = await initRes.json();
       if (!initRes.ok) throw new Error(initJson.error || "Document upload failed");
       const { documentId } = initJson;
+      refresh();
 
       const processRes = await fetch("/api/documents/process", {
         method: "POST",
@@ -81,7 +82,7 @@ export default function DocumentsPage() {
               </div>
               <div className="flex gap-2">
                 {d.status === "AVAILABLE" ? (
-                  <a href={`/api/documents/download?path=${encodeURIComponent(d.storagePath)}`} className="text-accent">Download</a>
+                  <a href={`/api/documents/download?documentId=${encodeURIComponent(d.documentId)}`} className="text-accent">Download</a>
                 ) : (
                   <span className="text-xs uppercase tracking-wide text-muted">{d.status}</span>
                 )}
@@ -90,6 +91,16 @@ export default function DocumentsPage() {
           </li>
         ))}
       </ul>
+      {nextCursor && (
+        <button
+          type="button"
+          disabled={loadingMore}
+          onClick={() => void loadMore()}
+          className="mt-3 rounded border px-3 py-1.5 disabled:opacity-60"
+        >
+          {loadingMore ? "Loading…" : "Load more"}
+        </button>
+      )}
     </div>
   );
 }

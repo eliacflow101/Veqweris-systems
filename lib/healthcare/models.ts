@@ -58,6 +58,11 @@ export interface ClinicalRecord {
   sensitivity: HealthcareSensitivity;
   authoredBy: string;
   createdAt: unknown;
+  updatedAt?: unknown;
+  specialtyId?: string | null;
+  locationId?: string;
+  unitId?: string;
+  departmentId?: string;
 }
 
 export interface BillingReference {

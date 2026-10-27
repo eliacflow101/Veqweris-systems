@@ -1,10 +1,11 @@
-export type DocumentProcessingStatus = "VALIDATED" | "EXTRACTED" | "NEEDS_REVIEW" | "UNSUPPORTED" | "REJECTED";
+export type DocumentProcessingStatus = "VALIDATED" | "EXTRACTED" | "NEEDS_REVIEW" | "UNSUPPORTED" | "REJECTED" | "FAILED";
 
 export type ProcessingInput = {
   fileName: string;
   mimeType: string;
   size: number;
   storagePath: string;
+  scanStatus: "CLEAN";
 };
 
 export type ProcessingResult = {
@@ -80,35 +81,18 @@ function isSupportedDocument(fileName: string, mimeType: string) {
   return supportedByMime || supportedByExtension;
 }
 
-function getNativeMetadataSummary({ fileName, mimeType, size, storagePath }: ProcessingInput) {
-  return `Native metadata extracted for ${fileName} (${mimeType || "unknown mime"}) from ${storagePath}. File size: ${size} bytes.`;
-}
-
-async function runOptionalOcr({ fileName, mimeType, storagePath }: ProcessingInput) {
-  const provider = process.env.DOCUMENT_OCR_PROVIDER;
-  const key = process.env.DOCUMENT_OCR_API_KEY;
-
-  if (!provider || !key) {
-    return { available: false, text: null };
-  }
-
-  const label = provider.toLowerCase();
-  if (label.includes("azure") || label.includes("document")) {
-    return {
-      available: true,
-      text: `OCR processed by ${provider} for ${fileName}. Native metadata was also extracted from ${storagePath}.`,
-    };
-  }
-
-  return {
-    available: true,
-    text: `OCR processed for ${fileName} using provider ${provider}.`,
-  };
-}
-
 export async function runDocumentProcessingPipeline(input: ProcessingInput): Promise<ProcessingResult> {
   const { fileName, mimeType, size, storagePath } = input;
   const normalizedMime = (mimeType || "").toLowerCase();
+
+  if (input.scanStatus !== "CLEAN") {
+    return {
+      status: "FAILED",
+      extractedText: null,
+      reason: "The file has no verified clean scanner verdict and must remain quarantined.",
+      metadata: { scanned: false, ocrAvailable: false, supported: false },
+    };
+  }
 
   if (!fileName || !storagePath) {
     return {
@@ -150,28 +134,16 @@ export async function runDocumentProcessingPipeline(input: ProcessingInput): Pro
   if (size > 25 * 1024 * 1024) {
     return {
       status: "NEEDS_REVIEW",
-      extractedText: getNativeMetadataSummary(input),
+      extractedText: null,
       reason: "The document exceeds the standard processing threshold and requires an operator review.",
-      metadata: { scanned: true, ocrAvailable: false, supported: true },
-    };
-  }
-
-  const ocr = await runOptionalOcr(input);
-  const extractedText = ocr.text ?? getNativeMetadataSummary(input);
-
-  if (ocr.available === false && (normalizedMime.startsWith("image/") || normalizedMime === "application/pdf")) {
-    return {
-      status: "VALIDATED",
-      extractedText,
-      reason: "Threat scan passed and native extraction completed. OCR is optional and not configured for this environment.",
       metadata: { scanned: true, ocrAvailable: false, supported: true },
     };
   }
 
   return {
     status: "VALIDATED",
-    extractedText,
-    reason: "Threat scan passed and document validation completed successfully.",
-    metadata: { scanned: true, ocrAvailable: Boolean(ocr.available), supported: true },
+    extractedText: null,
+    reason: "A verified clean scanner verdict was recorded. Content extraction is not configured.",
+    metadata: { scanned: true, ocrAvailable: false, supported: true },
   };
 }

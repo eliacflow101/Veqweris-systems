@@ -1,12 +1,23 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb, adminStorage } from "@/lib/firebase/admin";
-import { getSessionToken, verifyActiveSession } from "@/lib/firebase/server-auth";
 import { withInstitutionCapacity } from "@/lib/platform/capacity";
 import { requireInstitutionModuleEntitlement } from "@/lib/platform/tenant-entitlements";
+import { PermissionAuthorizationError, requirePermission } from "@/lib/permissions/server";
+import { canReadDocument } from "@/lib/documents/access";
+import { validateDocumentMagicBytes } from "@/lib/documents/scanner";
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
-const allowedMimeType = /^(text\/csv|application\/vnd\.ms-excel|application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet|application\/pdf|image\/[a-z0-9.+-]+)$/i;
+const allowedMimeTypes = new Set([
+  "text/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
 
 export async function POST(request: Request) {
   let storagePath: string | null = null;
@@ -14,19 +25,11 @@ export async function POST(request: Request) {
     if (!adminDb || !adminStorage) {
       return NextResponse.json({ error: "Firebase server is not configured." }, { status: 503 });
     }
-    const token = await getSessionToken(request);
-    if (!token) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-    const decoded = await verifyActiveSession(token);
-    const profileSnapshot = await adminDb.collection("users").doc(decoded.uid).get();
-    const profile = profileSnapshot.data();
-    if (!profileSnapshot.exists || !profile || profile.status !== "active" || !profile.institutionId) {
-      return NextResponse.json({ error: "Active institution membership is required." }, { status: 403 });
-    }
-    const institutionId = profile.institutionId as string;
-    if (!["Owner", "Admin", "Manager", "Employee"].includes(profile.role)) {
+    const context = await requirePermission(request, "documents.read");
+    const institutionId = context.institutionId;
+    if (!["Owner", "Admin", "Manager", "Employee"].includes(context.tier)) {
       return NextResponse.json({ error: "Document upload is not permitted for this role." }, { status: 403 });
     }
-    await requireInstitutionModuleEntitlement(institutionId, "documents");
 
     const form = await request.formData();
     const file = form.get("file");
@@ -37,7 +40,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Documents must be between 1 byte and 25 MB." }, { status: 400 });
     }
     const mimeType = file.type || "application/octet-stream";
-    if (!allowedMimeType.test(mimeType)) {
+    if (!allowedMimeTypes.has(mimeType.toLowerCase())) {
       return NextResponse.json({ error: "This document type is not supported." }, { status: 400 });
     }
     const moduleId = String(form.get("module") ?? "documents");
@@ -52,19 +55,27 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "The selected department is outside your institution." }, { status: 403 });
       }
     }
-    if (["Manager", "Employee"].includes(profile.role)
-      && departmentId && departmentId !== profile.departmentId) {
+    if (["Manager", "Employee"].includes(context.tier)
+      && departmentId && !context.membership.departmentIds.includes(departmentId)) {
       return NextResponse.json({ error: "Documents can only be assigned to your department." }, { status: 403 });
     }
     const fileName = file.name.trim().slice(0, 180);
     if (!fileName) return NextResponse.json({ error: "The document name is required." }, { status: 400 });
     const bytes = Buffer.from(await file.arrayBuffer());
     if (bytes.byteLength !== file.size) return NextResponse.json({ error: "The uploaded file size is inconsistent." }, { status: 400 });
+    if (!validateDocumentMagicBytes(bytes, mimeType)) {
+      return NextResponse.json({ error: "File content does not match an allowed document type." }, { status: 400 });
+    }
 
     const ref = adminDb.collection("documents").doc();
+    const requestedSourceId = form.get("entityRef");
+    const sourceId = typeof requestedSourceId === "string" && requestedSourceId.trim() ? requestedSourceId.trim() : null;
     const extMatch = fileName.match(/\.([0-9A-Za-z]+)$/);
     const extension = extMatch ? extMatch[1] : "bin";
     storagePath = `quarantine/${institutionId}/${ref.id}_v1.${extension}`;
+    if (!canReadDocument({ institutionId, uploadedBy: context.uid, departmentId }, context)) {
+      return NextResponse.json({ error: "Document access scope does not permit this upload." }, { status: 403 });
+    }
     const storageFile = adminStorage.bucket().file(storagePath);
     await storageFile.save(bytes, { resumable: false, metadata: { contentType: mimeType } });
 
@@ -82,18 +93,26 @@ export async function POST(request: Request) {
           mimeType,
           size: bytes.byteLength,
           storagePath,
-          uploadedBy: decoded.uid,
+          uploadedBy: context.uid,
           uploadedAt: FieldValue.serverTimestamp(),
           status: "QUEUED",
+          scanStatus: "UPLOADED_QUARANTINED",
           version: 1,
           module: moduleId,
-          entityRef: form.get("entityRef") || null,
+          entityRef: sourceId,
+          ...(sourceId ? { sourceType: moduleId, sourceId } : {}),
           departmentId,
+          createdBy: context.uid,
+          updatedBy: context.uid,
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
+          schemaVersion: 1,
         }),
       });
     } catch (reason) {
+      if (reason instanceof PermissionAuthorizationError) {
+        return NextResponse.json({ error: reason.message }, { status: reason.status });
+      }
       try {
         await storageFile.delete();
       } catch (cleanupError) {
